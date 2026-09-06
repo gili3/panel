@@ -34,13 +34,22 @@ const DEFAULT_ROUTE = '/notifications';
 
 function buildNotificationOptions(data) {
   const actionRoute = data.actionRoute && data.actionRoute.startsWith('/') ? data.actionRoute : DEFAULT_ROUTE;
+  // ✅ إصلاح v2: tag كان مبنياً من "type" فقط (`eleven-store-order` مثلاً)
+  // — أي أن كل إشعارات "order" (استلام الطلب، ثم لاحقاً تغيّر الحالة إلى
+  // "تم الشحن") كانت تتشارك نفس الـtag فتستبدل إحداها الأخرى صامتة! تحديث
+  // حقيقي لاحق (renotify:true) كان يُنبّه المستخدم لكن العنوان/النص القديم
+  // يختفي فوراً من مركز إشعارات النظام قبل أن يراه أصلاً. الآن نستخدم
+  // notificationId (معرّف حتمي فريد لكل حدث تحديداً، وليس لكل نوع) —
+  // تجميع فعلي فقط لإعادة تسليم *نفس* الحدث بالضبط من FCM (نادر لكن وارد
+  // على مستوى الشبكة)، بينما أي حدث مختلف يظهر كإشعار منفصل تماماً كما يجب.
+  const tag = data.notificationId || `eleven-store-${data.type || 'general'}-${Date.now()}`;
   return {
     body: data.body || '',
     icon: '/notification-icon.png',
     badge: '/badge-icon.png',
     vibrate: [200, 100, 200],
     silent: false,
-    tag: `eleven-store-${data.type || 'general'}`,
+    tag,
     renotify: true,
     data: { actionRoute },
   };

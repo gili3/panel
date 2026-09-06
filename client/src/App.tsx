@@ -99,13 +99,21 @@ function NotificationsBridge() {
   useEffect(() => {
     return listenForegroundPush((payload) => {
       if (typeof Notification === "undefined" || Notification.permission !== "granted") return;
+      // ✅ إصلاح: كان الـtag مبنياً من "type" فقط (`eleven-store-order` مثلاً)،
+      // فأي إشعارين متتاليين من نفس النوع (استلام الطلب ثم لاحقاً تغيّر
+      // الحالة) كانا يتشاركان نفس الـtag ويستبدل أحدهما الآخر صامتاً قبل أن
+      // يراهما المستخدم — نفس العلّة المُصلَحة سابقاً بـfirebase-messaging-sw.js
+      // لكنها كانت لا تزال قائمة هنا بمسار "المقدمة" فقط. الآن نستخدم
+      // notificationId (معرّف حتمي فريد لكل حدث تحديداً) بنفس منطق service
+      // worker: تجميع فعلي فقط لإعادة تسليم *نفس* الحدث بالضبط من FCM.
+      const tag = payload.notificationId || `eleven-store-${payload.type}-${Date.now()}`;
       const options: NotificationOptions & { vibrate?: number[] } = {
         body: payload.body,
         icon: "/notification-icon.png",
         badge: "/badge-icon.png",
         vibrate: [200, 100, 200],
         silent: false,
-        tag: `eleven-store-${payload.type}`,
+        tag,
         renotify: true,
         data: { actionRoute: payload.actionRoute || "/notifications" },
       };

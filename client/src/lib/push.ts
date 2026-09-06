@@ -178,6 +178,10 @@ export type ForegroundPushPayload = {
   body: string;
   type: string;
   actionRoute?: string;
+  // معرّف الحدث الحتمي القادم من السيرفر (sha1(dedupeKey)) — لازم لبناء tag
+  // مستقر لكل حدث تحديداً بدل تجميع كل إشعارات نفس النوع تحت tag واحد،
+  // راجع الشرح بجانب استخدامها في App.tsx.
+  notificationId?: string;
 };
 
 /**
@@ -197,6 +201,7 @@ export function listenForegroundPush(callback: (payload: ForegroundPushPayload) 
         body: data.body || "",
         type: data.type || "general",
         actionRoute: data.actionRoute || undefined,
+        notificationId: data.notificationId || undefined,
       });
     });
   });

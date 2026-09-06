@@ -1,9 +1,9 @@
 import { adminDb, adminAuth } from "./firebase-admin";
+import admin from "firebase-admin";
 import { publicProcedure, router, protectedProcedure, adminProcedure } from "./_core/trpc";
 import { z } from "zod";
 import { TRPCError } from "@trpc/server";
 import { randomBytes } from "node:crypto";
-import { notifyUser } from "./notification-service";
 import { checkCoupon, fetchCoupon, type CouponDoc } from "./coupon-service";
 import { ENV } from "./_core/env";
 import { checkRateLimit, clientKey } from "./_core/rateLimit";
@@ -148,41 +148,14 @@ async function runOrderPricingTransaction(
   });
 }
 
-// ✅ إصلاح تكرار: نفس منطق إرسال إشعار للأدمن + إشعار تأكيد للعميل، كان
-// مكرَّراً حرفياً بنفس try/catch الدفاعي بمكانين. أي فشل بالإشعارات هنا لا
-// يجب أبداً أن يُسقِط الشراء نفسه من منظور العميل — الطلب محفوظ فعلاً بهذه
-// النقطة (orderId) بصرف النظر عن نجاح الإشعار.
-async function dispatchOrderNotifications(
-  ctx: { user: { openId: string } },
-  orderId: string,
-  orderNumberString: string,
-  procedureName: string,
-) {
-  try {
-    const actionRoute = `/order/${orderId}`;
-    if (ENV.ownerOpenId) {
-      await notifyUser({
-        userId: ENV.ownerOpenId,
-        title: "طلب جديد",
-        body: `تم استلام طلب جديد رقم #${orderNumberString}`,
-        type: "order",
-        actionRoute,
-      });
-    } else {
-      console.warn("[Notification] OWNER_OPEN_ID غير مُهيّأ — لن يصل إشعار الطلب الجديد للأدمن");
-    }
-
-    await notifyUser({
-      userId: ctx.user.openId,
-      title: "تم استلام طلبك ✓",
-      body: `طلبك رقم #${orderNumberString} تم استلامه بنجاح وسيتم مراجعته قريباً.`,
-      type: "order",
-      actionRoute,
-    });
-  } catch (notifyError) {
-    console.error(`[${procedureName}] Notification dispatch failed (order was already created):`, notifyError);
-  }
-}
+// ✅ نظام الإشعارات v2: لا يوجد هنا أي استدعاء يدوي لإرسال إشعار الطلب بعد
+// الآن. إشعار "تم استلام طلبك" (للعميل) و"طلب جديد" (للأدمن) يُنشَئهما الآن
+// حصراً Cloud Function واحدة (functions/src/triggers/orderTriggers.ts::
+// onOrderCreated) تلاحظ إنشاء مستند orders/{orderId} نفسه — بصرف النظر عن
+// كون الطلب وصل من هنا (عبر السيرفر) أو مباشرة من تطبيق الأندرويد على
+// Firestore (placeOrder). هذا يوحّد المسارين في نقطة واحدة فعلياً، ويضمن
+// وصول Push حقيقي لصاحب المتجر حتى عن طلبات تطبيق الأندرويد (لم يكن هذا
+// ممكناً سابقاً لأن العميل لا يملك صلاحية استدعاء Admin SDK لإرسال Push).
 
 export const firestoreRouter = router({
   // --- المستخدمون ---
@@ -887,9 +860,8 @@ export const firestoreRouter = router({
       cartSnapshot.docs.forEach(doc => batch.delete(doc.ref));
       await batch.commit();
 
-      // ✅ إصلاح دفاعي: الطلب أعلاه (docRef) محفوظ بالفعل بهذه النقطة — تسجيل
-      // الإشعارات لا يجب أبداً أن يُسقِط عملية الشراء نفسها من منظور العميل.
-      await dispatchOrderNotifications(ctx, docRef.id, orderNumberString, "createOrder");
+      // إشعارا "تم استلام طلبك" و"طلب جديد" يصلان تلقائياً عبر Cloud Function
+      // (onOrderCreated) بمجرد نجاح docRef.set أعلاه — لا استدعاء يدوي هنا.
 
       // ✅ Algolia: المخزون تغيّر داخل runOrderPricingTransaction أعلاه —
       // نزامن سجلات المنتجات المتأثرة الآن (بعد نجاح الطلب بالكامل)، حتى لا
@@ -947,9 +919,8 @@ export const firestoreRouter = router({
       
       const docRef = await adminDb.collection("orders").add(orderData);
       
-      // ✅ نفس إصلاح createOrder: معرّف الأدمن الحقيقي + كتابة موحّدة (موقع + أندرويد) + Push فعلي للعميل
-      // ✅ إصلاح دفاعي: الطلب محفوظ بالفعل هنا — فشل الإشعارات يجب ألا يُسقِط الشراء
-      await dispatchOrderNotifications(ctx, docRef.id, orderNumberString, "createDirectOrder");
+      // نفس ملاحظة createOrder: onOrderCreated (Cloud Function) يتكفّل بإشعارَي
+      // العميل والأدمن تلقائياً بمجرد إنشاء docRef أعلاه.
 
       // ✅ Algolia: نفس إصلاح createOrder — إعادة مزامنة المخزون بعد نجاح الطلب
       resyncProductsStock([item.productId]).catch(() => {});
@@ -1275,37 +1246,10 @@ export const firestoreRouter = router({
         resyncProductsStock(orderData.items.map((item: any) => item.productId)).catch(() => {});
       }
 
-      // إرسال إشعار للمستخدم بتغيير حالة الطلب
-      const statusAr: any = {
-        'paid': 'تم تأكيد الدفع',
-        'shipped': 'تم شحن طلبك',
-        'delivered': 'تم توصيل الطلب',
-        'cancelled': 'تم إلغاء الطلب'
-      };
-
-      if (statusAr[input.status] && userId) {
-        // ✅ إصلاح إضافي (دفاعي): إرسال الإشعار الآن معزول بـ try/catch —
-        // حالة الطلب أعلاه محفوظة بالفعل بهذه النقطة؛ أي خطأ مستقبلي بمنطق
-        // الإشعارات (Push أو تسجيل الإشعار) يجب ألا يُسقِط الـmutation
-        // بأكملها ويُظهر خطأً للأدمن رغم أن التعديل نجح فعلياً.
-        try {
-          const typeMap: Record<string, "shipping" | "order" | "general"> = {
-            shipped: "shipping",
-            delivered: "order",
-            paid: "order",
-            cancelled: "general",
-          };
-          await notifyUser({
-            userId,
-            title: "تحديث حالة الطلب",
-            body: `حالة طلبك #${orderNumber}: ${statusAr[input.status]}`,
-            type: typeMap[input.status] || "general",
-            actionRoute: `/order/${id}`,
-          });
-        } catch (notifyError) {
-          console.error("[updateOrderStatus] Notification dispatch failed (order status was already saved):", notifyError);
-        }
-      }
+      // إشعار "تحديث حالة الطلب" يصل تلقائياً عبر Cloud Function
+      // (onOrderStatusChanged) بمجرد نجاح تعديل حقل status أعلاه — تلاحظ
+      // الدالة الفرق بين القيمة السابقة والجديدة لهذا الحقل تحديداً، فلا
+      // تُنشئ أي إشعار عند تعديل حقول أخرى بالطلب لا تخص الحالة.
 
       return { success: true };
     }),
@@ -1433,13 +1377,14 @@ export const firestoreRouter = router({
       };
     }),
 
-  // --- الإشعارات ---
-  // مصدر الحقيقة الوحيد: users/{uid}/notifications (نفس المسار الذي يقرأه
-  // تطبيق الأندرويد حرفياً). لا يوجد إجراء "getNotifications" هنا — الموقع
-  // يقرأ القائمة real-time مباشرة من Firestore عبر onSnapshot (بنفس أسلوب
-  // تطبيق الأندرويد: observeNotifications)، وليس عبر polling كل عدة ثوانٍ.
-  // هذه الإجراءات مسؤولة فقط عن التعديلات (كتابة) التي تتطلب تحقق ملكية
-  // صريح من السيرفر قبل التنفيذ.
+  // --- الإشعارات (v2) ---
+  // مصدر الحقيقة الوحيد: users/{uid}/notifications (يقرأها الموقع والتطبيق
+  // بنفس المسار عبر real-time listener، لا عبر polling). ⚠️ لا تعديل هنا
+  // على users/{uid}.notifUnreadCount إطلاقاً — تسويته تتم حصراً بواسطة
+  // Cloud Function واحدة (functions/src/triggers/notificationCounterTrigger.ts)
+  // تلاحظ كل كتابة على أي مستند إشعار بصرف النظر عن مصدرها (هذه الطفرات
+  // بالتحديد، أو كتابة مباشرة من تطبيق الأندرويد)، فيبقى العدّاد صحيحاً
+  // ومتّسقاً من نقطة واحدة فقط بدل تكرار منطق الزيادة/الإنقاص بكل دالة.
   markNotificationRead: protectedProcedure
     .input(z.object({ id: z.string() }))
     .mutation(async ({ ctx, input }) => {
@@ -1448,7 +1393,7 @@ export const firestoreRouter = router({
       if (!doc.exists) {
         throw new TRPCError({ code: "NOT_FOUND", message: "الإشعار غير موجود" });
       }
-      await ref.update({ isRead: true });
+      await ref.update({ isRead: true, readAt: admin.firestore.Timestamp.now() });
       return { success: true };
     }),
 
@@ -1459,8 +1404,10 @@ export const firestoreRouter = router({
         .collection("users").doc(userId).collection("notifications")
         .where("isRead", "==", false)
         .get();
+      if (snapshot.empty) return { success: true };
+      const now = admin.firestore.Timestamp.now();
       const batch = adminDb.batch();
-      snapshot.docs.forEach(doc => batch.update(doc.ref, { isRead: true }));
+      snapshot.docs.forEach(doc => batch.update(doc.ref, { isRead: true, readAt: now }));
       await batch.commit();
       return { success: true };
     }),
@@ -1473,15 +1420,11 @@ export const firestoreRouter = router({
       if (!doc.exists) {
         throw new TRPCError({ code: "NOT_FOUND", message: "الإشعار غير موجود" });
       }
-      // حذف حقيقي من قاعدة البيانات (نفس المستند الذي يقرأه التطبيق أيضاً)
-      // — لذا يظهر الحذف فوراً على كلا المنصتين، لا فقط بواجهة الموقع.
       await ref.delete();
       return { success: true };
     }),
 
-  // ✅ جديد: حذف كل إشعارات المستخدم دفعة واحدة (لزر "حذف الكل" أعلى صفحة
-  // الإشعارات بالموقع، خصوصاً بنسخة الهواتف). يحذف من نفس مسار قاعدة
-  // البيانات الذي يقرأه التطبيق، فتُحذف الإشعارات من الطرفين معاً.
+  // حذف كل إشعارات المستخدم دفعة واحدة (زر "حذف الكل" بصفحة الإشعارات).
   deleteAllNotifications: protectedProcedure
     .mutation(async ({ ctx }) => {
       const userId = ctx.user.id;

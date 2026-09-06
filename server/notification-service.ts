@@ -1,32 +1,43 @@
 import { adminDb } from "./firebase-admin";
 import admin from "firebase-admin";
+import * as crypto from "crypto";
 import type { NotificationType } from "../shared/types";
 
 /**
- * ELEVEN STORE — Notification Dispatch (إعادة بناء كاملة)
+ * ELEVEN STORE — نظام الإشعارات v2 (النواة العامة على سيرفر Node)
  * ─────────────────────────────────────────────────────────
- * مصدر الحقيقة الوحيد لكل إشعار: users/{uid}/notifications/{id}
- * تُقرأ هذه المجموعة حرفياً من ثلاث جهات: الموقع (real-time onSnapshot)،
- * تطبيق الأندرويد (نفس المسار)، وهذا الملف (الكتابة + الإرسال).
+ * ⚠️ منذ إعادة البناء v2: إشعارات الطلبات (استلام الطلب / تحديث الحالة)
+ * لم تعد تمر من هنا إطلاقاً — انتقلت بالكامل إلى Cloud Functions triggers
+ * (functions/src/triggers/orderTriggers.ts) التي تلاحظ orders/{orderId}
+ * مباشرة، لتوحيد المسار بين الموقع وتطبيق الأندرويد (راجع الشرح المفصّل
+ * هناك). هذا الملف الآن مخصَّص فقط لأي إشعار "عام" يُطلقه السيرفر مباشرة
+ * خارج سياق الطلبات — مثال: رسالة ترحيب بعد التسجيل، إشعار عرض ترويجي
+ * يُرسله الأدمن يدوياً، تنبيه أمني بحساب المستخدم، إلخ.
  *
- * القرارات المعمارية:
- * 1) دالة واحدة فقط لكل استدعاء (notifyUser) تكتب السجل وترسل الـPush معاً،
- *    بدل استدعاءين منفصلين متكررين في كل نقطة استدعاء بالسيرفر.
- * 2) رسائل FCM "data-only" حصراً (بدون حقل notification أعلى المستوى) —
- *    هذا شرط تقني إلزامي: أي حقل notification أعلى المستوى يجعل FCM نفسه
- *    (وليس كودنا) يقرر عرض الإشعار عبر مسار داخلي صامت غير موثوق على متصفحات
- *    الجوال، متجاوزاً service worker الخاص بنا بالكامل. بدلاً من ذلك، كل من
- *    onMessageReceived (أندرويد) و onBackgroundMessage (service worker
- *    بالموقع) يبنيان الإشعار يدوياً بنفس الشكل دائماً.
- * 3) فشل إرسال الـPush لا يُسقط كتابة السجل أبداً — المستخدم يرى الإشعار في
- *    القائمة عند فتح التطبيق/الموقع حتى لو تعذّر تسليم الـPush الفوري.
+ * القرارات المعمارية (مطابقة تماماً لنواة Cloud Functions حرفاً بحرف —
+ * أي تعديل هنا يجب أن يُطبَّق أيضاً على functions/src/lib/notifications.ts
+ * والعكس، فالملفان يطبّقان نفس الخوارزمية في بيئتي تشغيل منفصلتين):
+ *
+ * 1) معرّف المستند = sha1(dedupeKey)، وليس معرّفاً عشوائياً — أي استدعاء
+ *    متكرر لنفس dedupeKey (نقرة مزدوجة على زر، إعادة محاولة شبكية، طلب
+ *    HTTP مكرر) يكتب بالضبط نفس معرّف المستند. معاملة Firestore تتحقق من
+ *    عدم وجوده أولاً، فتكون النتيجة "مرة واحدة بالضبط" دائماً — بعكس
+ *    `.add()` بالتصميم القديم الذي لم يكن يملك أي حماية من التكرار إطلاقاً.
+ * 2) عدّاد notifUnreadCount يُزاد ذرّياً بنفس المعاملة التي تكتب الإشعار —
+ *    مصدر الحقيقة الوحيد لعدد غير المقروء (بدل عدّ عناصر القائمة المحمَّلة
+ *    بالعميل، التي كانت تُخطئ فور تجاوز حد الـlimit بالاستعلام).
+ * 3) رسائل FCM "data-only" حصراً (بدون حقل notification أعلى المستوى) —
+ *    شرط تقني إلزامي: أي حقل notification أعلى المستوى يجعل النظام نفسه
+ *    (لا كودنا) يقرر عرض الإشعار عبر مسار عرض تلقائي غير موثوق، متجاوزاً
+ *    service worker/onMessageReceived بالكامل على بعض الأجهزة/المتصفحات.
+ * 4) فشل إرسال الـPush لا يُسقط كتابة السجل أبداً، والعكس: لا نرسل Push إن
+ *    كان الإشعار مكرراً (created === false) — وإلا كان كل استدعاء متكرر
+ *    (retry) يُنتج تنبيه Push مزعجاً لإشعار موجود أصلاً بقائمة المستخدم.
  */
 
 const ANDROID_NOTIFICATION_CHANNEL_ID = "eleven_store_channel";
 const SITE_BASE_URL = (process.env.SITE_BASE_URL || "https://eleven-sd.com").replace(/\/$/, "");
 
-// أخطاء FCM التي تعني فعلاً أن التوكن نفسه لم يعد صالحاً بشكل دائم — أي خطأ
-// آخر (عطل مؤقت بجانب FCM، تجاوز حصة الإرسال...) لا يجب أن يحذف توكناً صالحاً.
 const PERMANENT_TOKEN_ERROR_CODES = new Set([
   "messaging/registration-token-not-registered",
   "messaging/invalid-registration-token",
@@ -35,20 +46,31 @@ const PERMANENT_TOKEN_ERROR_CODES = new Set([
 
 export type NotifyUserInput = {
   userId: string;
+  /**
+   * مفتاح فريد يصف الحدث نفسه (وليس معرّفاً عشوائياً لكل استدعاء) — يجب أن
+   * يبقى نفس القيمة بالضبط إن أُعيد تنفيذ نفس الحدث منطقياً. مثال:
+   * `welcome:${uid}` أو `promo:${campaignId}:${uid}`. إن تُرك فارغاً
+   * (undefined) يُستخدم معرّف عشوائي — أي بلا أي حماية من التكرار، لذا يجب
+   * تمريره صراحة لكل حدث له معنى قد يتكرر تنفيذه.
+   */
+  dedupeKey: string;
   title: string;
   body: string;
   type: NotificationType;
-  /** مسار داخلي يُفتح عند الضغط على الإشعار، مثال: "/order/abc123" */
   actionRoute?: string;
+  entityType?: "order" | "coupon" | null;
+  entityId?: string | null;
 };
 
-/** يبني رابطاً مطلقاً صالحاً لـ webpush.fcmOptions.link (يشترط FCM هذا صراحة). */
+function notificationIdFromDedupeKey(dedupeKey: string): string {
+  return crypto.createHash("sha1").update(dedupeKey).digest("hex").slice(0, 32);
+}
+
 function resolveAbsoluteLink(actionRoute?: string): string {
   const path = actionRoute && actionRoute.startsWith("/") ? actionRoute : "/notifications";
   return `${SITE_BASE_URL}${path}`;
 }
 
-/** يحذف من قائمة توكنات المستخدم فقط التوكنات التي تأكّد عطبها الدائم. */
 async function pruneDeadTokens(userId: string, tokens: string[], responses: admin.messaging.SendResponse[]) {
   const deadTokens: string[] = [];
   responses.forEach((resp, idx) => {
@@ -66,18 +88,27 @@ async function pruneDeadTokens(userId: string, tokens: string[], responses: admi
   }
 }
 
-async function pushToDevices(userId: string, title: string, body: string, type: NotificationType, actionRoute?: string) {
+async function pushToDevices(
+  userId: string,
+  notificationId: string,
+  title: string,
+  body: string,
+  type: NotificationType,
+  actionRoute?: string
+) {
   const userSnap = await adminDb.collection("users").doc(userId).get();
   const tokens: string[] = userSnap.data()?.fcmTokens || [];
   if (tokens.length === 0) return;
 
   const message: admin.messaging.MulticastMessage = {
     // ⚠️ لا يوجد حقل "notification" هنا عمداً — راجع الشرح أعلى الملف.
-    data: { title, body, type, actionRoute: actionRoute || "" },
+    data: { notificationId, title, body, type, actionRoute: actionRoute || "" },
     tokens,
     android: {
       priority: "high",
-      notification: { channelId: ANDROID_NOTIFICATION_CHANNEL_ID },
+      // tag = notificationId: إعادة تسليم نفس الحدث من FCM (نادر لكن وارد
+      // على مستوى الشبكة) تستبدل نفس الإشعار المعروض بدل تكديس نسخة ثانية.
+      notification: { channelId: ANDROID_NOTIFICATION_CHANNEL_ID, tag: notificationId },
     },
     webpush: {
       headers: { Urgency: "high" },
@@ -91,36 +122,71 @@ async function pushToDevices(userId: string, title: string, body: string, type: 
       await pruneDeadTokens(userId, tokens, response.responses);
     }
   } catch (error) {
-    // لا نرمي — كتابة السجل بقاعدة البيانات أهم من نجاح الـPush الفوري.
     console.error("[Notifications] تعذّر إرسال الـPush:", error);
   }
 }
 
 /**
- * نقطة الدخول الوحيدة لإرسال إشعار لمستخدم: تكتب السجل بقاعدة البيانات
- * (يظهر فوراً بقائمة الإشعارات على الموقع والتطبيق عبر real-time listener)
- * وترسل push إلى كل أجهزته المسجَّلة معاً.
+ * ينشئ سجل الإشعار بشكل idempotent (معرّف حتمي + معاملة تتحقق من الوجود
+ * أولاً). لا تلمس notifUnreadCount هنا إطلاقاً — Cloud Function مستقلة
+ * (functions/src/triggers/notificationCounterTrigger.ts) تلاحظ أي كتابة
+ * على مسار users/{uid}/notifications بصرف النظر عن مصدرها (Firestore
+ * trigger يعمل على مستوى المستند نفسه، لا يهمه أي عملية سيرفر كتبته) وتتكفّل
+ * بتسوية العدّاد ذرّياً بنفسها. تُعيد created:false إن كان هذا الحدث بالذات
+ * قد عُولج من قبل — بدون رمي خطأ، فالاستدعاء المتكرر لنفس dedupeKey يجب أن
+ * يكون آمناً دوماً.
+ */
+export async function createNotificationRecord(
+  input: Omit<NotifyUserInput, never>
+): Promise<{ id: string; created: boolean }> {
+  const id = notificationIdFromDedupeKey(input.dedupeKey);
+  const notifRef = adminDb.collection("users").doc(input.userId).collection("notifications").doc(id);
+
+  const created = await adminDb.runTransaction(async (tx) => {
+    const existing = await tx.get(notifRef);
+    if (existing.exists) return false;
+    tx.set(notifRef, {
+      dedupeKey: input.dedupeKey,
+      title: input.title,
+      body: input.body,
+      type: input.type,
+      isRead: false,
+      readAt: null,
+      actionRoute: input.actionRoute ?? null,
+      entityType: input.entityType ?? null,
+      entityId: input.entityId ?? null,
+      createdAt: admin.firestore.Timestamp.now(),
+    });
+    return true;
+  });
+
+  return { id, created };
+}
+
+/**
+ * نقطة الدخول الوحيدة لإرسال إشعار "عام" (غير متعلق بطلب) لمستخدم: تكتب
+ * السجل idempotent ثم ترسل push فقط إن كان الإشعار جديداً فعلاً.
  */
 export async function notifyUser(input: NotifyUserInput): Promise<void> {
-  const { userId, title, body, type, actionRoute } = input;
-  if (!userId) {
+  if (!input.userId) {
     console.warn("[Notifications] notifyUser بدون userId — تم التجاهل");
     return;
   }
-
-  try {
-    await adminDb.collection("users").doc(userId).collection("notifications").add({
-      title,
-      body,
-      type,
-      isRead: false,
-      ...(actionRoute ? { actionRoute } : {}),
-      createdAt: admin.firestore.Timestamp.now(),
-    });
-  } catch (error) {
-    console.error("[Notifications] تعذّرت كتابة سجل الإشعار:", error);
-    // نحاول إرسال الـPush رغم ذلك — أفضل من عدم إشعار المستخدم إطلاقاً.
+  if (!input.dedupeKey) {
+    console.warn("[Notifications] notifyUser بدون dedupeKey — لا حماية من التكرار لهذا الاستدعاء");
   }
 
-  await pushToDevices(userId, title, body, type, actionRoute);
+  let id: string;
+  let created: boolean;
+  try {
+    const result = await createNotificationRecord(input);
+    id = result.id;
+    created = result.created;
+  } catch (error) {
+    console.error("[Notifications] تعذّرت كتابة سجل الإشعار:", error);
+    return; // بدون id موثوق لا يمكن إرسال push مرتبط بنفس معرّف العرض بأمان
+  }
+
+  if (!created) return; // حدث مكرر عُولج من قبل — لا Push جديد.
+  await pushToDevices(input.userId, id, input.title, input.body, input.type, input.actionRoute);
 }

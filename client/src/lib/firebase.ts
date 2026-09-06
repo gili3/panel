@@ -1,7 +1,11 @@
 import { initializeApp } from "firebase/app";
 import { initializeAppCheck, ReCaptchaV3Provider } from "firebase/app-check";
 import { getAuth } from "firebase/auth";
-import { getFirestore } from "firebase/firestore";
+import {
+  initializeFirestore,
+  persistentLocalCache,
+  persistentMultipleTabManager,
+} from "firebase/firestore";
 import { getStorage } from "firebase/storage";
 
 /**
@@ -43,7 +47,20 @@ const firebaseConfig = {
 
 export const firebaseApp = initializeApp(firebaseConfig);
 export const auth = getAuth(firebaseApp);
-export const db = getFirestore(firebaseApp);
+
+// ✅ نظام الإشعارات v2: getFirestore() الافتراضي كان يعطي ذاكرة تخزين مؤقت
+// في الذاكرة فقط (memory-only) — أي أن قائمة الإشعارات وحالتها (مقروء/غير
+// مقروء) كانتا تختفيان بمجرد انقطاع الاتصال فعلياً وتحتاجان اتصالاً حياً
+// لأي قراءة أو تعديل، رغم أن "العمل عند انقطاع الإنترنت" أحد المتطلبات
+// الصريحة. persistentLocalCache يخزّن نسخة كاملة بـIndexedDB بالمتصفح:
+// onSnapshot يستمر بإرجاع آخر نسخة معروفة فوراً بدون اتصال، وأي markRead/
+// delete تصدر بينما الجهاز غير متصل تُحفظ محلياً كـ"كتابة معلَّقة" وتُزامَن
+// تلقائياً فور عودة الاتصال — بدون أي كود إضافي مطلوب منّا لإدارة طابور
+// إعادة المحاولة يدوياً. persistentMultipleTabManager يمنع تضارب النسخة
+// المخزَّنة إن فتح المستخدم الموقع بعدة تبويبات بنفس المتصفح في آن واحد.
+export const db = initializeFirestore(firebaseApp, {
+  localCache: persistentLocalCache({ tabManager: persistentMultipleTabManager() }),
+});
 export const storage = getStorage(firebaseApp);
 
 // App Check (reCAPTCHA v3) — يُفعَّل فقط إن وُجد مفتاح حقيقي بمتغيرات البيئة.

@@ -125,6 +125,24 @@ service cloud.firestore {
         : couponDiscountValid(data);
     }
 
+    // ─────────────────────────────────────────────────────────────────────
+    //  ✅ إصلاح (ثغرة مالية): shippingCost لم يكن يُتحقق منه هنا سابقاً إطلاقاً
+    //  مقابل settings/store — فقط "رقم غير سالب" متّسق حسابياً مع total. أي
+    //  عميل (APK مُعاد بناؤه، أو كتابة مباشرة لـFirestore بحساب مصادَق عليه)
+    //  كان يستطيع إرسال shippingCost: 0 مع كل طلب بصرف النظر عن إعدادات
+    //  الشحن الفعلية، بخسارة مالية فعلية متكرّرة. الآن نشتق قيمة الشحن
+    //  المتوقَّعة من settings/store (نفس منطق shippingBase/freeShippingThreshold
+    //  المستخدم بالسيرفر ضمن runOrderPricingTransaction) ونقارنها بالقيمة
+    //  المُرسَلة، بنفس أسلوب التحقق من الكوبون أعلاه.
+    // ─────────────────────────────────────────────────────────────────────
+    function shippingCostValid(data) {
+      let settings = get(/databases/$(database)/documents/settings/store).data;
+      let base = ("shippingCost" in settings) ? settings.shippingCost : 30;
+      let threshold = ("freeShippingThreshold" in settings) ? settings.freeShippingThreshold : 0;
+      let expected = (threshold > 0 && data.subtotal >= threshold) ? 0 : base;
+      return data.shippingCost == expected;
+    }
+
     // ═══════════════════════════════════════════════════════════════════
     //  users/{userId} — الملف الشخصي
     // ═══════════════════════════════════════════════════════════════════
@@ -153,8 +171,14 @@ service cloud.firestore {
       // تقنياً حشو الحقل بآلاف القيم الوهمية، مما يضخّم حجم الوثيقة ويزيد
       // خطر تجاوز حد Firestore لحجم المستند، وقد يُسقِط استدعاء
       // sendEachForMulticast بالكامل لتجاوزه حد 500 توكن بكل استدعاء).
+      // ✅ نظام الإشعارات v2: notifUnreadCount عدّاد مشتق تحسبه فقط النواة
+      // المشتركة (Cloud Functions / Admin SDK) ضمن نفس المعاملة الذرّية
+      // التي تُنشئ الإشعار — لا يمكن للعميل تعديله مباشرة إطلاقاً (بخلاف
+      // role يمكن أن "يُرسَل بلا تغيير"، هنا يُمنع إرساله كلياً من العميل
+      // لتفادي أي التباس أو تسابق مع الزيادة الذرّية بالسيرفر).
       allow update: if isOwner(userId) &&
         (!("role" in request.resource.data) || unchanged("role")) &&
+        !("notifUnreadCount" in request.resource.data) &&
         (!("fcmTokens" in request.resource.data) ||
           (request.resource.data.fcmTokens is list &&
            request.resource.data.fcmTokens.size() <= 20 &&
@@ -180,14 +204,27 @@ service cloud.firestore {
         allow read, write: if isOwner(userId);
       }
 
-      // ── users/{userId}/notifications/{notifId} ───────────────────────
-      // القراءة/التعليم كمقروء/الحذف لصاحب الحساب فقط.
-      // الإنشاء مسموح لصاحب الحساب أيضاً لأن تطبيق الأندرويد يحفظ نسخة محلية
-      // من إشعار FCM المستلم في المقدّمة مباشرة على جهاز المستخدم نفسه.
+      // ── users/{userId}/notifications/{notifId} — نظام v2 ─────────────
+      // القراءة لصاحب الحساب فقط (real-time listener بالموقع والتطبيق).
+      // الإنشاء ممنوع كلياً من العميل — يمر حصراً عبر Admin SDK: إما Cloud
+      // Function (functions/src/triggers/orderTriggers.ts عند إنشاء/تحديث
+      // حالة طلب) أو mutation مصادَق عليها بالسيرفر. هذا يمنع بالضبط الثغرة
+      // التي كانت موجودة سابقاً: عميل مُعدَّل (APK مفكوك/معاد تجميعه) قادر
+      // على تلفيق إشعار مزيّف بحسابه هو نفسه (مثال: "تم تأكيد الدفع" لطلب
+      // لم يُدفع فعلياً)، لأن الإنشاء كان مسموحاً بالكامل لصاحب الحساب.
+      //
+      // التعديل مسموح لصاحب الحساب، لكن محصور بحقلي isRead/readAt فقط (لا
+      // يمكنه تغيير العنوان/النص/actionRoute لإشعار موجود بالفعل)، والحذف
+      // مسموح بالكامل — كلاهما يعملان تلقائياً بدون اتصال (Firestore SDK
+      // يُصان الكتابة بطابور offline محلي ويُزامنها عند عودة الاتصال).
+      // عدّاد notifUnreadCount لا يتأثر بهذه الكتابة مباشرة أبداً — تسويته
+      // تتم حصراً عبر trigger مستقل (notificationCounterTrigger.ts) يلاحظ
+      // كل كتابة هنا بصرف النظر عن مصدرها ويُحدّث العدّاد ذرّياً بنفسه.
       match /notifications/{notifId} {
-        allow read, delete: if isOwner(userId);
-        allow create: if isOwner(userId);
-        allow update: if isOwner(userId) && onlyChangedKeys(['isRead']);
+        allow read: if isOwner(userId);
+        allow create: if false;
+        allow update: if isOwner(userId) && onlyChangedKeys(['isRead', 'readAt']);
+        allow delete: if isOwner(userId);
       }
     }
 
@@ -339,6 +376,10 @@ service cloud.firestore {
         request.resource.data.total is number && request.resource.data.total >= 0 &&
         request.resource.data.total ==
           request.resource.data.subtotal - request.resource.data.discount + request.resource.data.shippingCost &&
+        // ✅ إصلاح (ثغرة مالية): shippingCost يجب أن يطابق القيمة المشتقة فعلياً
+        // من settings/store (سعر الشحن الأساسي أو صفر إن تجاوز subtotal حد
+        // الشحن المجاني) — وليس أي رقم غير سالب يختاره العميل، راجع shippingCostValid().
+        shippingCostValid(request.resource.data) &&
         // ✅ إصلاح (Audit C-1): كل سعر عنصر يجب أن يطابق سعر المنتج الحقيقي وقت الطلب،
         // والمجموع الفرعي يجب أن يطابق مجموع (سعر × كمية) الحقيقي لكل العناصر —
         // هذا يمنع إنشاء طلب بسعر مُلفَّق عبر كتابة مباشرة لقاعدة البيانات خارج التطبيق.
@@ -354,13 +395,11 @@ service cloud.firestore {
     }
 
     // ═══════════════════════════════════════════════════════════════════
-    //  notifications/{id} — مجموعة الموقع العلوية (userId كحقل)
-    // ═══════════════════════════════════════════════════════════════════
-    //  ⚠️ ملاحظة: هذه مختلفة تماماً عن users/{uid}/notifications التي
-    //  يستخدمها تطبيق الأندرويد — الموقع يكتب هنا فقط عبر Admin SDK،
-    //  وتطبيق الأندرويد لا يقرأ من هنا إطلاقاً حالياً (عدم اتساق موجود
-    //  بالتصميم الحالي، خارج نطاق قواعد الأمان — راجعوا توحيد المصدرين).
-    //  القاعدة هنا: منع أي وصول مباشر من العميل بالكامل (Admin SDK فقط).
+    //  notifications/{id} — مجموعة علوية قديمة، غير مستخدَمة إطلاقاً
+    //  بنظام الإشعارات v2 (مصدر الحقيقة الوحيد الآن هو
+    //  users/{uid}/notifications حصراً). أُبقيت هنا مرفوضة بالكامل فقط
+    //  حتى تُحذف فعلياً أي مستندات متبقية فيها يدوياً، ثم يمكن حذف هذا
+    //  الـmatch block نهائياً من الملف.
     // ═══════════════════════════════════════════════════════════════════
     match /notifications/{id} {
       allow read, write: if false;

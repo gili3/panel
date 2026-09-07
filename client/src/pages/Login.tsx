@@ -152,9 +152,9 @@ export default function Login() {
                   <span className="text-xs tracking-widest font-bold" style={{ color: 'var(--primary)' }}>ELEVEN</span>
                 </div>
                 <h1 className="text-3xl font-bold text-foreground mb-2" style={{ fontFamily: 'Georgia, serif' }}>
-                  تسجيل الدخول
+                  لوحة التحكم
                 </h1>
-                <p className="text-sm text-muted-foreground">أهلاً بك في متجرنا</p>
+                <p className="text-sm text-muted-foreground">تسجيل الدخول مخصص لفريق الإدارة فقط</p>
               </div>
 
               <form onSubmit={handleLogin} className="space-y-5">
@@ -242,13 +242,6 @@ export default function Login() {
                   </svg>
                   تسجيل الدخول عبر Google
                 </Button>
-
-                <p className="text-center text-sm text-muted-foreground mt-6 font-medium">
-                  ليس لديك حساب؟{" "}
-                  <a href="/register" className="text-primary font-bold hover:text-primary/80 transition-colors">
-                    إنشاء حساب جديد
-                  </a>
-                </p>
               </form>
             </CardContent>
           </Card>

@@ -19,6 +19,23 @@ export default function Orders() {
   );
   const isLoading = authLoading || ordersLoading;
 
+  if (!authLoading && !user) {
+    return (
+      <Layout>
+        <div className="max-w-2xl mx-auto px-4 py-16 text-center space-y-4">
+          <p className="text-muted-foreground">سجّل الدخول لعرض طلباتك</p>
+          <Link href="/login">
+            <a>
+              <Button className="bg-primary text-primary-foreground hover:bg-primary/90 font-bold">
+                تسجيل الدخول
+              </Button>
+            </a>
+          </Link>
+        </div>
+      </Layout>
+    );
+  }
+
   return (
     <Layout>
       <div className="container py-12 max-w-3xl">

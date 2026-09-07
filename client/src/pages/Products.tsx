@@ -44,6 +44,8 @@ export default function Products() {
     if (filter) setFilterType(filter);
     const cat = params.get("category");
     if (cat) setSelectedCategory(cat);
+    const brand = params.get("brand");
+    if (brand) setSelectedBrand(brand);
     const q = params.get("q");
     if (q) setSearchQuery(q);
   }, []);

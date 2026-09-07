@@ -38,7 +38,11 @@ export default function ProductDetail({ params }: Props = {}) {
 
   const handleShare = () => {
     if (navigator.share) {
-      navigator.share({ title: product?.name, text: `${product?.name} - ${product?.price} ج.س`, url: window.location.href });
+      navigator.share({ title: product?.name, text: `${product?.name} - ${product?.price} ج.س`, url: window.location.href }).catch(() => {
+        // ✅ إصلاح: navigator.share() يرفض الـPromise (AbortError) عند إلغاء
+        // المستخدم لنافذة المشاركة نفسها — وهو سلوك طبيعي متوقَّع وليس خطأً،
+        // فلا داعي لعرض أي رسالة خطأ للمستخدم بسببه.
+      });
     } else {
       navigator.clipboard.writeText(window.location.href);
       toast.success("تم نسخ الرابط");

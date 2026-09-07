@@ -4,7 +4,7 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
 import { useLocation, useSearch, Link } from "wouter";
-import { MapPin, CreditCard, CheckCircle, Plus, Loader2, Upload, X, ChevronRight } from "lucide-react";
+import { MapPin, CreditCard, CheckCircle, Plus, Loader2, Upload, X, ChevronRight, AlertCircle } from "lucide-react";
 import { useState, useEffect, useRef } from "react";
 import { trpc } from "@/lib/trpc";
 import { toast } from "sonner";
@@ -228,7 +228,12 @@ function ConfirmationStep({
         className="flex items-start gap-3 p-4 bg-secondary/20 rounded-xl border border-border cursor-pointer"
         onClick={() => setAgree(!agree)}
       >
-        <Checkbox checked={agree} onCheckedChange={(v) => setAgree(v as boolean)} className="mt-0.5" />
+        <Checkbox
+          checked={agree}
+          onCheckedChange={(v) => setAgree(v as boolean)}
+          onClick={(e) => e.stopPropagation()}
+          className="mt-0.5"
+        />
         <p className="text-sm text-foreground leading-relaxed">
           {/* ✅ إصلاح: رابط ميت href="#" — يشير الآن للصفحتين الفعليتين */}
           أوافق على <a href="/terms" target="_blank" rel="noopener noreferrer" className="text-primary font-semibold">الشروط والأحكام</a> و<a href="/privacy-policy" target="_blank" rel="noopener noreferrer" className="text-primary font-semibold">سياسة الخصوصية</a>
@@ -262,11 +267,22 @@ export default function Checkout() {
   const buyNowProductId = params.get("productId") || "";
   const buyNowQuantity = parseInt(params.get("quantity") || "1", 10);
 
-  const { data: buyNowProduct } = trpc.firestore.getProduct.useQuery(
+  const {
+    data: buyNowProduct,
+    isLoading: buyNowLoading,
+    isFetched: buyNowFetched,
+  } = trpc.firestore.getProduct.useQuery(
     { id: buyNowProductId }, { enabled: isBuyNow && !!buyNowProductId }
   );
 
-  const { data: cartItemsRaw = [] } = trpc.firestore.getCart.useQuery(undefined, { enabled: !isBuyNow });
+  // ✅ إصلاح: "اشترِ الآن" لمنتج محذوف أو غير موجود (أو استعلامه ما زال قيد
+  // التحميل) كان يُنتج نفس الشكل تماماً: cartItems = [] — فتظهر شاشة الدفع
+  // وكأنها سلة فارغة عادية بدل توضيح أن المنتج تحديداً غير متاح، مع بقاء زر
+  // "إتمام الطلب" قابلاً للضغط في حالة السلة الفارغة الحقيقية.
+  const buyNowProductUnavailable =
+    isBuyNow && (!buyNowProductId || (buyNowFetched && !buyNowProduct));
+
+  const { data: cartItemsRaw = [], isLoading: cartLoading } = trpc.firestore.getCart.useQuery(undefined, { enabled: !isBuyNow });
   const { data: settings } = trpc.firestore.getStoreSettings.useQuery();
   const utils = trpc.useUtils();
 
@@ -378,6 +394,77 @@ export default function Checkout() {
       });
     }
   };
+
+  // ✅ حالة تحميل واضحة أثناء جلب منتج "اشترِ الآن" — بدل ظهور "المنتجات (0)"
+  // للحظة قبل وصول الرد.
+  if (isBuyNow && buyNowLoading) {
+    return (
+      <Layout>
+        <div className="flex justify-center items-center py-40">
+          <Loader2 className="w-10 h-10 animate-spin text-primary" />
+        </div>
+      </Layout>
+    );
+  }
+
+  // ✅ حالة خطأ واضحة: منتج "اشترِ الآن" غير موجود/محذوف، بدل شاشة دفع
+  // تبدو كسلة فارغة عادية مع زر "إتمام الطلب" لا يزال قابلاً للضغط.
+  if (buyNowProductUnavailable) {
+    return (
+      <Layout>
+        <div className="container py-20 max-w-md text-center">
+          <div className="w-20 h-20 bg-destructive/10 rounded-full flex items-center justify-center mx-auto mb-6">
+            <AlertCircle className="w-10 h-10 text-destructive" />
+          </div>
+          <h2 className="text-xl font-bold text-foreground mb-2">هذا المنتج غير متاح</h2>
+          <p className="text-muted-foreground mb-8">
+            قد يكون المنتج قد حُذف أو نفدت كميته. تصفّح بقية المنتجات لإكمال طلبك.
+          </p>
+          <Link href="/products">
+            <a>
+              <Button className="bg-primary text-primary-foreground hover:bg-primary/90 font-bold">
+                تصفّح المنتجات
+              </Button>
+            </a>
+          </Link>
+        </div>
+      </Layout>
+    );
+  }
+
+  // ✅ حالة تحميل واضحة للسلة العادية (غير Buy Now) — بنفس منطق Buy Now أعلاه.
+  if (!isBuyNow && cartLoading) {
+    return (
+      <Layout>
+        <div className="flex justify-center items-center py-40">
+          <Loader2 className="w-10 h-10 animate-spin text-primary" />
+        </div>
+      </Layout>
+    );
+  }
+
+  // ✅ سلة فارغة حقيقية (وليست حالة Buy Now) — امنع الوصول لخطوات الدفع
+  // بلا أي عنصر، بدل ترك زر "إتمام الطلب" قابلاً للضغط بقائمة فارغة.
+  if (!isBuyNow && cartItems.length === 0) {
+    return (
+      <Layout>
+        <div className="container py-20 max-w-md text-center">
+          <div className="w-20 h-20 bg-accent/10 border-2 border-primary rounded-full flex items-center justify-center mx-auto mb-6">
+            <CreditCard className="w-10 h-10 text-primary" />
+          </div>
+          <h2 className="text-xl font-bold text-foreground mb-2">سلتك فارغة</h2>
+          <p className="text-muted-foreground mb-8">أضف بعض المنتجات إلى سلتك أولاً لإكمال الطلب.</p>
+          <Link href="/products">
+            <a>
+              <Button className="bg-primary text-primary-foreground hover:bg-primary/90 font-bold">
+                تصفّح المنتجات
+              </Button>
+            </a>
+          </Link>
+        </div>
+      </Layout>
+    );
+  }
 
   return (
     <Layout>

@@ -15,7 +15,10 @@ const emptyForm = { fullName: "", phone: "", city: "", address: "", isDefault: f
 export default function Profile() {
   const { user, loading, updateUserProfile } = useAuth();
   const [, setLocation] = useLocation();
-  const [tab, setTab] = useState<"info" | "addresses">("info");
+  const [tab, setTab] = useState<"info" | "addresses">(() => {
+    const params = new URLSearchParams(window.location.search);
+    return params.get("tab") === "addresses" ? "addresses" : "info";
+  });
   const [showForm, setShowForm] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [form, setForm] = useState(emptyForm);
@@ -73,6 +76,9 @@ export default function Profile() {
       resetForm();
       utils.firestore.getAddresses.invalidate();
     },
+    onError: (err) => {
+      toast.error(err.message || "تعذّرت إضافة العنوان، حاول مرة أخرى");
+    },
   });
 
   const updateAddress = trpc.firestore.updateAddress.useMutation({
@@ -81,10 +87,16 @@ export default function Profile() {
       resetForm();
       utils.firestore.getAddresses.invalidate();
     },
+    onError: (err) => {
+      toast.error(err.message || "تعذّر تعديل العنوان، حاول مرة أخرى");
+    },
   });
 
   const deleteAddress = trpc.firestore.deleteAddress.useMutation({
     onSuccess: () => { toast.success("تم حذف العنوان"); utils.firestore.getAddresses.invalidate(); },
+    onError: (err) => {
+      toast.error(err.message || "تعذّر حذف العنوان، حاول مرة أخرى");
+    },
   });
 
   useEffect(() => { if (!loading && !user) setLocation("/"); }, [user, loading]);

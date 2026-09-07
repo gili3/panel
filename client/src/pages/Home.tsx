@@ -104,7 +104,7 @@ function CategoryItem({ category }: { category: any }) {
 /* ── Brand Card (matches APK BrandCard exactly) ── */
 function BrandCard({ brand }: { brand: any }) {
   return (
-    <Link href={`/products?filter=brands`}>
+    <Link href={`/products?filter=brands&brand=${brand.id}`}>
       <a className="flex-shrink-0 w-24 h-24 bg-white rounded-xl border border-border shadow-sm hover:shadow-md flex items-center justify-center p-3 transition-all">
         <img src={brand.logo} alt={brand.name} className="w-full h-full object-contain" />
       </a>
@@ -213,6 +213,8 @@ export default function Home() {
                   <button
                     key={i}
                     onClick={() => setCurrentSlide(i)}
+                    aria-label={`الانتقال إلى الشريحة ${i + 1} من ${banners.length}`}
+                    aria-current={i === currentSlide}
                     className={`transition-all rounded-full h-1.5 ${i === currentSlide ? "w-5 bg-primary" : "w-1.5 bg-white/60"}`}
                   />
                 ))}

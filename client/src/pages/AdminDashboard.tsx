@@ -1242,7 +1242,7 @@ export default function AdminDashboard() {
                                       <Edit2 className="w-4 h-4" />
                                     </Button>
                                   </DialogTrigger>
-                                  {activeOrderDialog?.id === order.id && (
+                                  {activeOrderDialog && activeOrderDialog.id === order.id && (
                                     <OrderStatusDialog
                                       orderId={order.id}
                                       currentStatus={activeOrderDialog.status}

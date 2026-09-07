@@ -8,6 +8,16 @@ import { checkCoupon, fetchCoupon, type CouponDoc } from "./coupon-service";
 import { ENV } from "./_core/env";
 import { checkRateLimit, clientKey } from "./_core/rateLimit";
 import { syncProductToIndex, removeProductFromIndex, resyncProductsStock } from "./algolia-service";
+import type { Product } from "@shared/types";
+
+// ✅ إصلاح: المسارات التي تُرجع منتجات كانت تعتمد على استنتاج ضمني من
+// doc.data() (أو من query معلَّم بـ`any`)، فيصل النوع للعميل غامضاً ويمنع
+// فحص TypeScript من التحقق من استخدام name/price/images/stock/description
+// في Home.tsx وCheckout.tsx وProductDetail.tsx. هذه الدالة تُثبّت شكل
+// الإرجاع صراحةً على Product المشترك بين الخادم والعميل.
+function toProductDto(doc: FirebaseFirestore.QueryDocumentSnapshot | FirebaseFirestore.DocumentSnapshot): Product & { id: string } {
+  return { id: doc.id, ...(doc.data() as Omit<Product, "id">) };
+}
 
 // رسائل موحّدة تستخدم في كل عمليات السلة المرتبطة بالمخزون
 const OUT_OF_STOCK_MSG = "الكمية المطلوبة غير متوفرة في المخزون";
@@ -163,7 +173,7 @@ export const firestoreRouter = router({
     .input(z.object({ token: z.string() }))
     .mutation(async ({ input, ctx }) => {
       const userRef = adminDb.collection("users").doc(ctx.user.openId);
-      const { FieldValue } = await import("firebase-admin");
+      const { FieldValue } = admin.firestore;
       // ✅ إصلاح حرج: كان يُستخدم هنا userRef.update() — وهو يفشل بصمت (يرمي
       // خطأ NOT_FOUND) إن لم تكن وثيقة users/{uid} موجودة بعد وقت وصول
       // التوكن (تعارض توقيت مع setDoc في صفحة التسجيل بالمتصفح). عندها
@@ -193,7 +203,7 @@ export const firestoreRouter = router({
     .input(z.object({ token: z.string() }))
     .mutation(async ({ input, ctx }) => {
       const userRef = adminDb.collection("users").doc(ctx.user.openId);
-      const { FieldValue } = await import("firebase-admin");
+      const { FieldValue } = admin.firestore;
       await userRef.set(
         { fcmTokens: FieldValue.arrayRemove(input.token) },
         { merge: true }
@@ -407,8 +417,8 @@ export const firestoreRouter = router({
       const snapshot = await query.limit(100).get();
       // ✅ لا تُعرض المنتجات التي نفدت كميتها (stock <= 0) في صفحات المنتجات
       return snapshot.docs
-        .map((doc: any) => ({ id: doc.id, ...doc.data() }))
-        .filter((p: any) => (p.stock ?? 0) > 0);
+        .map((doc: FirebaseFirestore.QueryDocumentSnapshot) => toProductDto(doc))
+        .filter((p: Product) => (p.stock ?? 0) > 0);
     }),
 
   // ✅ جديد: لوحة تحكم الأدمن لإدارة المنتجات كانت تستخدم getProducts
@@ -421,7 +431,7 @@ export const firestoreRouter = router({
   // محمياً بـadminProcedure (صلاحية أدمن فقط).
   getAllProductsAdmin: adminProcedure.query(async ({ ctx }) => {
     const snapshot = await adminDb.collection("products").orderBy("createdAt", "desc").get();
-    return snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+    return snapshot.docs.map(doc => toProductDto(doc));
   }),
 
   // --- المنتجات الجديدة (حسب تاريخ الإضافة) ---
@@ -445,8 +455,8 @@ export const firestoreRouter = router({
         .get();
       
       return snapshot.docs
-        .map(doc => ({ id: doc.id, ...doc.data() }))
-        .filter((p: any) => (p.stock ?? 0) > 0);
+        .map(doc => toProductDto(doc))
+        .filter((p: Product) => (p.stock ?? 0) > 0);
     }),
 
   // --- الأكثر مبيعاً --- فهرس 6: isActive + isBestSeller + createdAt DESC ✅
@@ -468,8 +478,8 @@ export const firestoreRouter = router({
         .limit(input?.limit || 10)
         .get();
       return snapshot.docs
-        .map((doc: any) => ({ id: doc.id, ...doc.data() }))
-        .filter((p: any) => (p.stock ?? 0) > 0);
+        .map((doc: FirebaseFirestore.QueryDocumentSnapshot) => toProductDto(doc))
+        .filter((p: Product) => (p.stock ?? 0) > 0);
     }),
 
   getProduct: publicProcedure
@@ -477,7 +487,7 @@ export const firestoreRouter = router({
     .query(async ({ input }) => {
       const doc = await adminDb.collection("products").doc(input.id).get();
       if (!doc.exists) return null;
-      return { id: doc.id, ...doc.data() };
+      return toProductDto(doc);
     }),
 
   // --- سلة التسوق ---
@@ -702,53 +712,51 @@ export const firestoreRouter = router({
 
   addAddress: protectedProcedure
     .input(z.object({
-      fullName: z.string(),
-      phone: z.string(),
-      city: z.string(),
-      address: z.string(),
+      fullName: z.string().trim().min(2, "الاسم الكامل مطلوب"),
+      phone: z.string().trim().min(8, "رقم الهاتف غير صحيح"),
+      city: z.string().trim().min(1, "المدينة مطلوبة"),
+      address: z.string().trim().min(5, "العنوان التفصيلي مطلوب"),
       isDefault: z.boolean().default(false),
     }))
     .mutation(async ({ input, ctx }) => {
       const userRef = adminDb.collection("users").doc(ctx.user.openId);
-      
-      if (input.isDefault) {
-        const snapshot = await userRef.collection("addresses").where("isDefault", "==", true).get();
-        const { FieldValue } = await import("firebase-admin");
-        const batch = adminDb.batch();
-        snapshot.docs.forEach(doc => batch.update(doc.ref, { isDefault: false }));
-        await batch.commit();
-      }
-      
-      const docRef = await userRef.collection("addresses").add({
-        ...input,
-        createdAt: new Date()
+      const addressesRef = userRef.collection("addresses");
+
+      // ✅ إصلاح: كان إلغاء تحديد العناوين الافتراضية القديمة (batch) وإضافة
+      // العنوان الجديد يتمّان كعمليتين منفصلتين غير ذرّيتين — لو وصل طلبان
+      // متزامنان (مثلاً من تبويبين)، قد ينتهي الأمر بأكثر من عنوان "افتراضي"
+      // معاً. الآن كل شيء داخل transaction واحدة.
+      const newId = addressesRef.doc().id;
+      await adminDb.runTransaction(async (tx) => {
+        if (input.isDefault) {
+          const snapshot = await tx.get(addressesRef.where("isDefault", "==", true));
+          snapshot.docs.forEach(doc => tx.update(doc.ref, { isDefault: false }));
+        }
+        tx.set(addressesRef.doc(newId), { ...input, createdAt: new Date() });
       });
-      return { id: docRef.id, success: true };
+      return { id: newId, success: true };
     }),
 
   updateAddress: protectedProcedure
     .input(z.object({
       id: z.string(),
-      fullName: z.string(),
-      phone: z.string(),
-      city: z.string(),
-      address: z.string(),
+      fullName: z.string().trim().min(2, "الاسم الكامل مطلوب"),
+      phone: z.string().trim().min(8, "رقم الهاتف غير صحيح"),
+      city: z.string().trim().min(1, "المدينة مطلوبة"),
+      address: z.string().trim().min(5, "العنوان التفصيلي مطلوب"),
       isDefault: z.boolean().default(false),
     }))
     .mutation(async ({ input, ctx }) => {
       const { id, ...data } = input;
       const userRef = adminDb.collection("users").doc(ctx.user.openId);
+      const addressesRef = userRef.collection("addresses");
 
-      if (data.isDefault) {
-        const snapshot = await userRef.collection("addresses").where("isDefault", "==", true).get();
-        const batch = adminDb.batch();
-        snapshot.docs.forEach(doc => { if (doc.id !== id) batch.update(doc.ref, { isDefault: false }); });
-        await batch.commit();
-      }
-
-      await userRef.collection("addresses").doc(id).update({
-        ...data,
-        updatedAt: new Date(),
+      await adminDb.runTransaction(async (tx) => {
+        if (data.isDefault) {
+          const snapshot = await tx.get(addressesRef.where("isDefault", "==", true));
+          snapshot.docs.forEach(doc => { if (doc.id !== id) tx.update(doc.ref, { isDefault: false }); });
+        }
+        tx.update(addressesRef.doc(id), { ...data, updatedAt: new Date() });
       });
       return { success: true };
     }),

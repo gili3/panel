@@ -4,7 +4,7 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Link } from "wouter";
 import { Trash2, Plus, Minus, ArrowRight, Loader2, ShoppingBag } from "lucide-react";
-import { useState, useCallback, useMemo } from "react";
+import { useState, useCallback, useMemo, useEffect, useRef } from "react";
 import { trpc } from "@/lib/trpc";
 import { toast } from "sonner";
 import { formatNumber } from "@/lib/formatters";
@@ -155,23 +155,43 @@ export default function Cart() {
   // البيانات (تُدار من لوحة التحكم). هذا فقط للمعاينة؛ التحقق النهائي والخصم الفعلي يتمّان
   // في السيرفر عند إنشاء الطلب حتى لا يمكن التلاعب بالخصم من المتصفح.
   const subtotalRaw = cartItems.reduce((s: number, i: any) => s + i.price * i.quantity, 0);
+  const isSilentRevalidation = useRef(false);
   const validateCoupon = trpc.firestore.validateCoupon.useMutation({
     onSuccess: (res) => {
+      const silent = isSilentRevalidation.current;
+      isSilentRevalidation.current = false;
       if (res.valid) {
         setCouponDiscount(res.discountAmount);
         setCouponApplied(true);
-        toast.success("تم تطبيق كود الخصم");
+        if (!silent) toast.success("تم تطبيق كود الخصم");
       } else {
+        setCouponDiscount(0);
+        setCouponApplied(false);
         toast.error(res.message);
       }
     },
-    onError: (err) => toast.error(err.message || "تعذر التحقق من كود الخصم"),
+    onError: (err) => {
+      isSilentRevalidation.current = false;
+      toast.error(err.message || "تعذر التحقق من كود الخصم");
+    },
   });
 
   const handleApplyCoupon = () => {
     if (!couponCode.trim()) { toast.error("يرجى إدخال كود الخصم"); return; }
     validateCoupon.mutate({ code: couponCode, subtotal: subtotalRaw });
   };
+
+  // ✅ إصلاح: كان تغيير كمية عنصر بالسلة بعد تطبيق كوبون يُبقي couponDiscount
+  // كما هو (محسوباً من subtotal القديم) بدل إعادة التحقق — فقد يظل الخصم
+  // معروضاً رغم أن السلة لم تعد تحقق الحد الأدنى لهذا الكوبون، أو (لكوبونات
+  // النسبة المئوية) يظل المبلغ المطلق القديم بدل احتسابه من الإجمالي الجديد.
+  useEffect(() => {
+    if (couponApplied && couponCode && subtotalRaw > 0) {
+      isSilentRevalidation.current = true;
+      validateCoupon.mutate({ code: couponCode, subtotal: subtotalRaw });
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [subtotalRaw]);
 
   const totals = useMemo(() => {
     const subtotal = subtotalRaw;

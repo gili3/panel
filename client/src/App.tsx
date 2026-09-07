@@ -107,7 +107,7 @@ function NotificationsBridge() {
       // notificationId (معرّف حتمي فريد لكل حدث تحديداً) بنفس منطق service
       // worker: تجميع فعلي فقط لإعادة تسليم *نفس* الحدث بالضبط من FCM.
       const tag = payload.notificationId || `eleven-store-${payload.type}-${Date.now()}`;
-      const options: NotificationOptions & { vibrate?: number[] } = {
+      const options: NotificationOptions & { vibrate?: number[]; renotify?: boolean } = {
         body: payload.body,
         icon: "/notification-icon.png",
         badge: "/badge-icon.png",

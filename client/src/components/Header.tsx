@@ -2,7 +2,7 @@ import { useAuth } from "@/_core/hooks/useAuth";
 import { Button } from "@/components/ui/button";
 import { Sheet, SheetContent, SheetTrigger } from "@/components/ui/sheet";
 import { Badge } from "@/components/ui/badge";
-import { Menu, Search, ShoppingCart, Heart, User, LogOut, ShoppingBag, BarChart3, X, Home, Phone, Info, Bell } from "lucide-react";
+import { Menu, Search, ShoppingCart, Heart, User, LogOut, ShoppingBag, X, Home, Phone, Info, Bell } from "lucide-react";
 import { Link, useLocation } from "wouter";
 import { useState, useEffect } from "react";
 import { useQuery } from "@tanstack/react-query";
@@ -114,19 +114,6 @@ export default function Header() {
                         </a>
                       </Link>
                     ))}
-                    
-                    {/* لوحة التحكم - للمشرفين فقط */}
-                    {user?.role === 'admin' && (
-                      <Link href="/admin">
-                        <a
-                          className="flex items-center gap-3 text-sm font-medium text-foreground hover:text-primary hover:bg-accent/5 rounded-lg px-3 py-3 transition-colors"
-                          onClick={() => setIsOpen(false)}
-                        >
-                          <BarChart3 className="w-5 h-5" />
-                          <span>لوحة التحكم</span>
-                        </a>
-                      </Link>
-                    )}
                   </div>
                 </nav>
 

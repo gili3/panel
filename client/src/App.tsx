@@ -25,7 +25,6 @@ import Cart from "./pages/Cart";
 import Profile from "./pages/Profile";
 import Favorites from "./pages/Favorites";
 import Checkout from "./pages/Checkout";
-import AdminDashboard from "./pages/AdminDashboard";
 import Login from "./pages/Login";
 import Register from "./pages/Register";
 import Orders from "./pages/Orders";
@@ -48,7 +47,6 @@ function Router() {
       <Route path={"/profile"} component={Profile} />
       <Route path={"/favorites"} component={Favorites} />
       <Route path={"/checkout"} component={Checkout} />
-      <Route path={"/admin"} component={AdminDashboard} />
       <Route path={"/login"} component={Login} />
       <Route path={"/register"} component={Register} />
       <Route path={"/orders"} component={Orders} />

@@ -2,7 +2,7 @@ import { auth, db } from "@/lib/firebase";
 import { getCurrentDeviceToken } from "@/lib/push";
 import { onAuthStateChanged, signOut, User as FirebaseUser } from "firebase/auth";
 import { doc, onSnapshot } from "firebase/firestore";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { trpc } from "@/lib/trpc";
 import {
   getCachedAuthFlag,
@@ -10,6 +10,7 @@ import {
   establishServerSession,
   clearServerSession,
   fetchWhoAmI,
+  type WhoAmIUser,
 } from "@/lib/session";
 
 type UseAuthOptions = {
@@ -37,6 +38,29 @@ export function useAuth(options?: UseAuthOptions) {
   // الدخول، حتى لا نُحوّل مستخدماً مسجّلاً دخول فعلاً بسبب لحظة تحميل مبكرة.
   const [firebaseChecked, setFirebaseChecked] = useState(false);
 
+  // ✅ إصلاح "تأخر التحقق بلوحة التحكم عند الفتح/التحديث" (نسخة نهائية):
+  // كان هناك مصدران منفصلان لنفس المعلومة — whoami (سريع) وtrpc.auth.me
+  // (أبطأ) — وكانت اللوحة تنتظر الأبطأ منهما فقط، رغم أن الأسرع يكفي وحده.
+  // الحل النهائي: whoami أصبح يرجّع الآن كل ما تحتاجه اللوحة بطلب واحد فقط
+  // (الدور + الصلاحيات التفصيلية + isSuperAdmin) عبر نفس دالة buildUser()
+  // التي يستخدمها سيرفر tRPC بالضبط (راجع admin/server/_core/buildUser.ts) —
+  // فأصبح مصدراً وحيداً وكاملاً، ولم يعد هناك داعٍ لاستعلام trpc.auth.me
+  // إطلاقاً هنا: طلب شبكة واحد بدل طلبين، وبلا أي احتمال تعارض بينهما.
+  const [whoAmIUser, setWhoAmIUser] = useState<WhoAmIUser>(null);
+  // true فقط قبل وصول أول رد فعلي (نجاحاً أو فشلاً) من whoami بعد معرفة أن
+  // هناك جلسة Firebase — بعدها لا يحجب أي تحديث لاحق (تحديثات الصلاحيات
+  // تنعكس بصمت دون أي حجب أو وميض، كما كان مصمَّماً أصلاً).
+  const hasResolvedWhoAmIRef = useRef(false);
+  const [whoAmIResolved, setWhoAmIResolved] = useState(false);
+
+  const refreshWhoAmI = useCallback(async () => {
+    const result = await fetchWhoAmI();
+    setWhoAmIUser(result);
+    hasResolvedWhoAmIRef.current = true;
+    setWhoAmIResolved(true);
+    return result;
+  }, []);
+
   useEffect(() => {
     if (!firebaseUser) {
       setProfileDoc(null);
@@ -48,22 +72,50 @@ export function useAuth(options?: UseAuthOptions) {
     return () => unsubscribe();
   }, [firebaseUser]);
 
-  // جلب بيانات المستخدم الكاملة من السيرفر (بما فيها الدور)
-  const { data: serverUser, isLoading: isServerUserLoading, refetch: refetchServerUser } = 
-    trpc.auth.me.useQuery(undefined, {
-      enabled: !!firebaseUser,
+  // ✅ إصلاح "تأخر اكتشاف تغيّر الصلاحيات": whoami لا يُخزَّن مؤقتاً على
+  // العميل (يُطلَب فعلياً من السيرفر كل مرة)، لكن دون سبب لإعادة طلبه لا يصل
+  // أي تحديث تلقائي لو تغيّرت صلاحيات هذا المستخدم بينما جلسته مفتوحة أصلاً.
+  // الحل: مراقبة role/adminPermissions/disabled عبر onSnapshot حي (نفس وثيقة
+  // Firestore التي تقرأها buildUser() بالسيرفر) — فور أي تغيّر فعلي بهذه
+  // الحقول تحديداً (وليس أي كتابة أخرى بالوثيقة كالاسم/الهاتف) نعيد استدعاء
+  // whoami فوراً، فتنعكس الصلاحية الجديدة خلال لحظات دون أي حجب بالواجهة.
+  const lastPermSignatureRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (!firebaseUser) {
+      lastPermSignatureRef.current = null;
+      return;
+    }
+    const unsubscribe = onSnapshot(doc(db, "users", firebaseUser.uid), (snap) => {
+      const data = snap.exists() ? (snap.data() as Record<string, unknown>) : null;
+      const permSignature = JSON.stringify({
+        role: data?.role ?? null,
+        adminPermissions: Array.isArray(data?.adminPermissions) ? data!.adminPermissions : [],
+        disabled: Boolean(data?.disabled),
+      });
+      if (lastPermSignatureRef.current !== null && lastPermSignatureRef.current !== permSignature) {
+        refreshWhoAmI();
+      }
+      lastPermSignatureRef.current = permSignature;
     });
+    return () => unsubscribe();
+  }, [firebaseUser, refreshWhoAmI]);
 
   // ✅ مسار سريع مستقل تماماً عن تهيئة Firebase SDK: نسأل السيرفر مباشرة عن
   // حالة كوكي الجلسة فور الإقلاع، بالتوازي وليس بعد انتظار onAuthStateChanged.
   // هذا عادة أسرع بكثير (طلب HTTP خفيف واحد) من استعادة جلسة Firebase محلياً
   // خصوصاً عند أول تحميل أو على شبكات بطيئة — وهو ما يعطي إحساس "جلسة فورية"
   // مطابق للمواقع الكبيرة التي تعتمد كوكيز الجلسة بدل انتظار SDK بالكامل.
+  // بما أن whoami أصبح يرجّع الدور والصلاحيات كاملة، هذا الاستدعاء الواحد
+  // يكفي وحده لعرض لوحة التحكم فوراً دون أي طلب ثانٍ لاحق.
   useEffect(() => {
     let cancelled = false;
-    fetchWhoAmI().then((whoAmIUser) => {
-      if (cancelled || !whoAmIUser) return;
-      setUser((prev: any) => prev ?? { ...whoAmIUser, phone: "" });
+    fetchWhoAmI().then((result) => {
+      if (cancelled) return;
+      hasResolvedWhoAmIRef.current = true;
+      setWhoAmIResolved(true);
+      if (!result) return;
+      setUser((prev: any) => prev ?? { ...result, phone: "" });
+      setWhoAmIUser(result);
       setLoading(false);
     });
     return () => {
@@ -81,6 +133,7 @@ export function useAuth(options?: UseAuthOptions) {
 
         if (!fbUser) {
           setUser(null);
+          setWhoAmIUser(null);
           setCachedAuthFlag(false);
           return;
         }
@@ -96,9 +149,9 @@ export function useAuth(options?: UseAuthOptions) {
             console.error("[Auth] فشل إنشاء جلسة السيرفر (fb_session):", err);
           }
         }
-        
-        // ✅ إعادة جلب بيانات المستخدم من السيرفر لتحديث sessionReady
-        refetchServerUser();
+
+        // ✅ إعادة جلب بيانات المستخدم من whoami لتحديث sessionReady والدور
+        refreshWhoAmI();
       },
       (err) => {
         setError(err);
@@ -108,10 +161,10 @@ export function useAuth(options?: UseAuthOptions) {
     );
 
     return () => unsubscribe();
-  }, [refetchServerUser]);
+  }, [refreshWhoAmI]);
 
   // تحديث user فور توفر جلسة Firebase (دور مبدئي "user")، ثم رفعه فوراً
-  // لـ"admin" بصمت بمجرد وصول رد السيرفر — بدون أي حجب أو وميض بالواجهة
+  // لـ"admin" بصمت بمجرد وصول رد whoami — بدون أي حجب أو وميض بالواجهة
   useEffect(() => {
     if (!firebaseUser) return;
     const enrichedUser = {
@@ -121,12 +174,12 @@ export function useAuth(options?: UseAuthOptions) {
       email: firebaseUser.email,
       name: profileDoc?.name || firebaseUser.displayName || "",
       phone: profileDoc?.phone || "",
-      role: serverUser?.role || "user",
-      isSuperAdmin: Boolean((serverUser as any)?.isSuperAdmin),
-      permissions: (serverUser as any)?.permissions ?? [],
+      role: whoAmIUser?.role || "user",
+      isSuperAdmin: Boolean(whoAmIUser?.isSuperAdmin),
+      permissions: whoAmIUser?.permissions ?? [],
     };
     setUser(enrichedUser);
-  }, [firebaseUser, serverUser, profileDoc]);
+  }, [firebaseUser, whoAmIUser, profileDoc]);
 
   const updateUserProfile = useCallback(async (name: string, phone: string) => {
     if (!auth.currentUser) throw new Error("لا يوجد مستخدم مسجل الدخول");
@@ -171,6 +224,7 @@ export function useAuth(options?: UseAuthOptions) {
 
       await Promise.all([signOut(auth), clearServerSession()]);
       setUser(null);
+      setWhoAmIUser(null);
     } catch (err) {
       setError(err as Error);
     }
@@ -191,10 +245,11 @@ export function useAuth(options?: UseAuthOptions) {
 
   return {
     user,
-    loading, // ✅ سريع: يبدأ متفائلاً من فلاغ محلي أو من whoami، ولا ينتظر السيرفر لتحديد الدور
+    loading, // ✅ سريع: يبدأ متفائلاً من فلاغ محلي أو من whoami، ولا ينتظر أي طلب ثانٍ لتحديد الدور
     // ✅ للاستخدام فقط بالأماكن التي تحتاج تحديداً تأكيد الدور (مثال: بوابة صفحة الأدمن)
     // قبل تنفيذ أي إجراء حسّاس — بقية الصفحات (سلة، طلبات، ملف شخصي) لا تحتاجه إطلاقاً.
-    roleLoading: Boolean(firebaseUser) && isServerUserLoading,
+    // الآن يعتمد على استعلام واحد فقط (whoami)، فلا ينتظر أي طلب ثانٍ منفصل.
+    roleLoading: Boolean(firebaseUser) && !whoAmIResolved,
     // ✅ مهم: true فقط بعد تأكيد فعلي من السيرفر أن كوكي الجلسة (fb_session)
     // نشِطة وصالحة — وليس فقط أن Firebase SDK لديه مستخدماً محلياً. يوجد فارق
     // زمني حقيقي بينهما (راجع lib/session.ts::establishServerSession): عند
@@ -204,7 +259,7 @@ export function useAuth(options?: UseAuthOptions) {
     // فتح الصفحة — يفشل بصمت (401) دون أي إشعار للمستخدم أو إعادة محاولة،
     // فتبقى قائمة fcmTokens فارغة ولا يصل أي Push إطلاقاً رغم أن الإذن ممنوح
     // فعلياً بالمتصفح. استخدم هذا الحقل لتأجيل أي إجراء كهذا حتى يصبح true.
-    sessionReady: Boolean(serverUser) && !isServerUserLoading,
+    sessionReady: Boolean(whoAmIUser) && whoAmIResolved,
     error,
     isAuthenticated: Boolean(user),
     refresh: () => {}, // Firebase handles this automatically

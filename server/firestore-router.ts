@@ -991,6 +991,10 @@ export const firestoreRouter = router({
       description: z.string(),
       image: z.string().optional(),
       cta: z.string().default("تسوق الآن"),
+      // ✅ إصلاح: الحقل كان محذوفاً من هذا الـschema بالكامل (رغم وجوده في
+      // شكل البيانات المستخدَم بتطبيق الأندرويد) — أي رابط يُرسَل من الواجهة
+      // كان يُسقَط بصمت قبل الوصول لقاعدة البيانات، فلا يُحفظ إطلاقاً.
+      link: z.string().optional(),
       order: z.number().default(0),
       isActive: z.boolean().default(true),
     }))
@@ -1010,6 +1014,7 @@ export const firestoreRouter = router({
       description: z.string().optional(),
       image: z.string().optional(),
       cta: z.string().optional(),
+      link: z.string().optional(),
       order: z.number().optional(),
       isActive: z.boolean().optional(),
     }))

@@ -35,7 +35,6 @@ import type { NotificationType } from "../shared/types";
  *    (retry) يُنتج تنبيه Push مزعجاً لإشعار موجود أصلاً بقائمة المستخدم.
  */
 
-const ANDROID_NOTIFICATION_CHANNEL_ID = "eleven_store_channel";
 const SITE_BASE_URL = (process.env.SITE_BASE_URL || "https://eleven-sd.com").replace(/\/$/, "");
 
 const PERMANENT_TOKEN_ERROR_CODES = new Set([
@@ -102,13 +101,19 @@ async function pushToDevices(
 
   const message: admin.messaging.MulticastMessage = {
     // ⚠️ لا يوجد حقل "notification" هنا عمداً — راجع الشرح أعلى الملف.
+    // ✅ إصلاح: أُزيل android.notification بالكامل (كان يحوي channelId/tag
+    // فقط بلا عنوان أو نص). مجرد وجود هذا الحقل — حتى بلا عنوان/نص — يجعل
+    // أندرويد يصنّف الرسالة "رسالة عرض" ويعرضها هو تلقائياً حين يكون التطبيق
+    // بالخلفية أو مغلقاً، متجاوزاً onMessageReceived في
+    // ElevenFirebaseMessagingService.kt تماماً؛ وبما أن الحقل فارغ من
+    // عنوان/نص، يظهر إشعار بلا محتوى (بالضبط الأعراض المُبلَّغ عنها). الآن
+    // الرسالة data-only حقيقية بلا أي استثناء، فيبقى onMessageReceived هو
+    // المسؤول الوحيد عن العرض في كل الحالات (مقدمة/خلفية/تطبيق مغلق)، بنفس
+    // العنوان والنص الصحيحين دائماً.
     data: { notificationId, title, body, type, actionRoute: actionRoute || "" },
     tokens,
     android: {
       priority: "high",
-      // tag = notificationId: إعادة تسليم نفس الحدث من FCM (نادر لكن وارد
-      // على مستوى الشبكة) تستبدل نفس الإشعار المعروض بدل تكديس نسخة ثانية.
-      notification: { channelId: ANDROID_NOTIFICATION_CHANNEL_ID, tag: notificationId },
     },
     webpush: {
       headers: { Urgency: "high" },

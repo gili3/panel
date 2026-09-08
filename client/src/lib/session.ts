@@ -69,6 +69,8 @@ export type WhoAmIUser = {
   email?: string;
   name?: string;
   role: "admin" | "user";
+  isSuperAdmin: boolean;
+  permissions: string[];
 } | null;
 
 /**

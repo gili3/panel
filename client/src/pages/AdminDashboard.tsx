@@ -58,6 +58,7 @@ interface BannerFormData {
   description: string;
   image: string;
   cta: string;
+  link: string;
   order: number;
   isActive: boolean;
 }
@@ -246,7 +247,7 @@ export default function AdminDashboard() {
 
   // Banner Form
   const [bannerForm, setBannerForm] = useState<BannerFormData>({
-    id: "", title: "", description: "", image: "", cta: "تسوق الآن", order: 0, isActive: true,
+    id: "", title: "", description: "", image: "", cta: "تسوق الآن", link: "", order: 0, isActive: true,
   });
   const [showBannerDialog, setShowBannerDialog] = useState(false);
   const [isEditingBanner, setIsEditingBanner] = useState(false);
@@ -507,7 +508,7 @@ export default function AdminDashboard() {
     discountType: 'percentage', discountValue: 0,
   });
   const resetCategoryForm = () => setCategoryForm({ id: "", name: "", description: "", image: "" });
-  const resetBannerForm = () => setBannerForm({ id: "", title: "", description: "", image: "", cta: "تسوق الآن", order: 0, isActive: true });
+  const resetBannerForm = () => setBannerForm({ id: "", title: "", description: "", image: "", cta: "تسوق الآن", link: "", order: 0, isActive: true });
   const resetBrandForm = () => setBrandForm({ id: "", name: "", logo: "", link: "" });
 
   // حساب السعر النهائي
@@ -640,6 +641,7 @@ export default function AdminDashboard() {
       description: banner.description || "",
       image: banner.image || "",
       cta: banner.cta || "تسوق الآن",
+      link: banner.link || "",
       order: banner.order || 0,
       isActive: banner.isActive !== false
     });
@@ -1482,6 +1484,19 @@ export default function AdminDashboard() {
                         </div>
                       </div>
                       <div>
+                        <label className="text-sm font-semibold">الرابط عند الضغط (اختياري)</label>
+                        <Input
+                          value={bannerForm.link}
+                          onChange={(e) => setBannerForm({ ...bannerForm, link: e.target.value })}
+                          placeholder="مثال: /product/xxxxx أو /category/xxxxx أو https://..."
+                          dir="ltr"
+                        />
+                        <p className="text-xs text-muted-foreground mt-1">
+                          اتركه فارغاً ليذهب البانر لصفحة كل المنتجات كالسابق. لفتح منتج أو تصنيف
+                          محدد استخدم مسار داخلي يبدأ بـ "/" (مثل /product/ID)، أو رابطاً خارجياً كاملاً (https://...).
+                        </p>
+                      </div>
+                      <div>
                         <label className="text-sm font-semibold block mb-2">صورة البانر</label>
                         <label className={`flex items-center justify-center w-full px-4 py-2 border-2 border-dashed border-border rounded-lg cursor-pointer hover:bg-muted transition-colors ${isUploadingBannerImage ? 'opacity-50 cursor-not-allowed' : ''}`}>
                           <div className="flex items-center gap-2">
@@ -1535,6 +1550,9 @@ export default function AdminDashboard() {
                             <span className={`text-xs font-semibold ${banner.isActive ? "text-green-600" : "text-red-500"}`}>
                               {banner.isActive ? "● مفعّل" : "○ معطّل"}
                             </span>
+                            {banner.link && (
+                              <span className="text-xs text-muted-foreground truncate" dir="ltr">↳ {banner.link}</span>
+                            )}
                           </div>
                         </div>
                         <div className="flex gap-2 flex-shrink-0">

@@ -3,6 +3,7 @@ import { ENV } from "./env";
 import { getSessionCookieOptions } from "./cookies";
 import { simpleRateLimit } from "./rateLimit";
 import { adminAuth, adminDb } from "../firebase-admin";
+import { buildUser } from "./buildUser";
 import {
   createSession,
   verifySession,
@@ -16,24 +17,6 @@ import {
 // محاولة كل 15 دقيقة لكل IP (يكفي بسهولة لأي استخدام شرعي، حتى مع تبديل
 // الشبكة أو محاولات فاشلة متكررة بسبب خطأ كلمة مرور بصفحة تسجيل الدخول).
 const loginRateLimit = simpleRateLimit("session-login", 20, 15 * 60 * 1000);
-
-// ✅ إصلاح: كانت هذه الدالة تتحقق فقط من OWNER_OPEN_ID، بعكس buildUser() في
-// context.ts التي تتحقق أيضاً من حقل users/{uid}.role بـFirestore لدعم أدمنز
-// متعددين. النتيجة: أي أدمن غير صاحب المتجر كان يظهر له "لا تملك صلاحيات
-// كافية" لحظياً عبر المسار السريع (whoami) عند فتح اللوحة أو تحديث الصفحة،
-// قبل أن يصل رد trpc.auth.me الصحيح ويصحّح الوضع — إرباك حقيقي لأي أدمن
-// غير المالك رغم أن صلاحياته الفعلية سليمة عبر tRPC. الآن تقرأ نفس الحقل.
-async function roleFor(uid: string): Promise<"admin" | "user"> {
-  if (ENV.ownerOpenId && uid === ENV.ownerOpenId) return "admin";
-  try {
-    const snap = await adminDb.collection("users").doc(uid).get();
-    const data = snap.data();
-    if (data?.role === "admin" && !data?.disabled) return "admin";
-  } catch (error) {
-    console.error("[Session] فشل قراءة دور المستخدم من Firestore (whoami):", error);
-  }
-  return "user";
-}
 
 // ✅ إصلاح حرج: الدور الإداري كان يُحسب فقط لحظياً هنا وبـcontext.ts (مقارنة
 // uid مع OWNER_OPEN_ID)، ولا يُكتب أبداً كحقل فعلي على مستند users/{uid}
@@ -100,9 +83,11 @@ export function registerSessionRoutes(app: Express) {
     res.json({ success: true });
   });
 
-  // ✅ نقطة تحقق خفيفة وسريعة جداً (لا تحتاج Firestore ولا أي استعلام إضافي):
-  // الواجهة تستدعيها فور الإقلاع بالتوازي مع تهيئة Firebase SDK — وليس بعد
-  // انتظارها — عشان تعرف حالة الدخول والدور مباشرة من الكوكي.
+  // ✅ نقطة تحقق واحدة وكاملة (تستخدم نفس buildUser() التي يستخدمها سياق
+  // tRPC بالضبط): الواجهة تستدعيها فور الإقلاع بالتوازي مع تهيئة Firebase
+  // SDK — وليس بعد انتظارها — فتحصل بطلب واحد فقط على كل ما تحتاجه (الدور،
+  // الصلاحيات التفصيلية، isSuperAdmin) دون أي حاجة لاستعلام trpc.auth.me
+  // إضافي بعدها فقط لتأكيد نفس المعلومة من نفس المصدر بطلب أبطأ.
   app.get("/api/session/whoami", async (req: Request, res: Response) => {
     const sessionCookie = readCookie(req, SESSION_COOKIE_NAME);
     if (!sessionCookie) {
@@ -112,15 +97,8 @@ export function registerSessionRoutes(app: Express) {
 
     try {
       const decoded = await verifySession(sessionCookie);
-      res.json({
-        user: {
-          id: decoded.uid,
-          openId: decoded.uid,
-          email: decoded.email,
-          name: decoded.name,
-          role: await roleFor(decoded.uid),
-        },
-      });
+      const user = await buildUser(decoded.uid, decoded.email, decoded.name);
+      res.json({ user });
     } catch {
       // كوكي غير صالح/منتهي/مُلغى — نمسحه حتى لا يُرسَل بلا فائدة مع كل طلب
       const cookieOptions = getSessionCookieOptions(req);

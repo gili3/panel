@@ -57,6 +57,9 @@ export type NotifyUserInput = {
   body: string;
   type: NotificationType;
   actionRoute?: string;
+  /** رابط صورة اختيارية (إشعارات العروض غالباً) — تُحفظ بالسجل وتُرسل ضمن
+   * بيانات FCM لعرضها بـAndroid (BigPictureStyle) وService Worker بالويب. */
+  imageUrl?: string;
   entityType?: "order" | "coupon" | null;
   entityId?: string | null;
 };
@@ -93,7 +96,8 @@ async function pushToDevices(
   title: string,
   body: string,
   type: NotificationType,
-  actionRoute?: string
+  actionRoute?: string,
+  imageUrl?: string
 ) {
   const userSnap = await adminDb.collection("users").doc(userId).get();
   const tokens: string[] = userSnap.data()?.fcmTokens || [];
@@ -110,7 +114,7 @@ async function pushToDevices(
     // الرسالة data-only حقيقية بلا أي استثناء، فيبقى onMessageReceived هو
     // المسؤول الوحيد عن العرض في كل الحالات (مقدمة/خلفية/تطبيق مغلق)، بنفس
     // العنوان والنص الصحيحين دائماً.
-    data: { notificationId, title, body, type, actionRoute: actionRoute || "" },
+    data: { notificationId, title, body, type, actionRoute: actionRoute || "", imageUrl: imageUrl || "" },
     tokens,
     android: {
       priority: "high",
@@ -158,6 +162,7 @@ export async function createNotificationRecord(
       isRead: false,
       readAt: null,
       actionRoute: input.actionRoute ?? null,
+      imageUrl: input.imageUrl ?? null,
       entityType: input.entityType ?? null,
       entityId: input.entityId ?? null,
       createdAt: admin.firestore.Timestamp.now(),
@@ -193,5 +198,5 @@ export async function notifyUser(input: NotifyUserInput): Promise<void> {
   }
 
   if (!created) return; // حدث مكرر عُولج من قبل — لا Push جديد.
-  await pushToDevices(input.userId, id, input.title, input.body, input.type, input.actionRoute);
+  await pushToDevices(input.userId, id, input.title, input.body, input.type, input.actionRoute, input.imageUrl);
 }

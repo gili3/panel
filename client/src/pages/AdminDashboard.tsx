@@ -296,9 +296,36 @@ export default function AdminDashboard() {
 
   // Data fetching
   const { data: storeSettings } = trpc.firestore.getStoreSettings.useQuery();
-  const { data: products = [], isLoading: isProductsLoading } = trpc.firestore.getAllProductsAdmin.useQuery(undefined, {
-    enabled: !!user && user.role === "admin",
-  });
+  // ✅ Pagination حقيقية (نفس نمط الطلبات أدناه): أول صفحة عبر useQuery، ثم
+  // صفحات إضافية تُراكَم يدوياً عبر "تحميل المزيد" بدل جلب كل المنتجات دفعة
+  // واحدة — راجع التعليق فوق getAllProductsAdmin بالسيرفر لتفاصيل السبب.
+  const [loadedProducts, setLoadedProducts] = useState<any[]>([]);
+  const [productsCursor, setProductsCursor] = useState<string | null>(null);
+  const [isLoadingMoreProducts, setIsLoadingMoreProducts] = useState(false);
+  const { data: firstProductsPage, isLoading: isProductsLoading } = trpc.firestore.getAllProductsAdmin.useQuery(
+    {},
+    { enabled: !!user && user.role === "admin" }
+  );
+  useEffect(() => {
+    if (firstProductsPage) {
+      setLoadedProducts(firstProductsPage.products);
+      setProductsCursor(firstProductsPage.nextCursor);
+    }
+  }, [firstProductsPage]);
+  const products = loadedProducts;
+  const loadMoreProducts = async () => {
+    if (!productsCursor || isLoadingMoreProducts) return;
+    setIsLoadingMoreProducts(true);
+    try {
+      const page = await utils.firestore.getAllProductsAdmin.fetch({ cursor: productsCursor });
+      setLoadedProducts((prev) => [...prev, ...page.products]);
+      setProductsCursor(page.nextCursor);
+    } catch (err: any) {
+      toast.error(err?.message || "تعذّر تحميل المزيد من المنتجات");
+    } finally {
+      setIsLoadingMoreProducts(false);
+    }
+  };
   const { data: categories = [], isLoading: isCategoriesLoading } = trpc.firestore.getCategories.useQuery();
   const { data: banners = [], isLoading: isBannersLoading } = trpc.firestore.getAllBannersAdmin.useQuery(undefined, {
     enabled: !!user && user.role === "admin",
@@ -1227,6 +1254,14 @@ export default function AdminDashboard() {
                         })}
                       </TableBody>
                     </Table>
+                    {productsCursor && (
+                      <div className="flex justify-center pt-4">
+                        <Button variant="outline" onClick={loadMoreProducts} disabled={isLoadingMoreProducts}>
+                          {isLoadingMoreProducts ? <Loader2 className="w-4 h-4 ml-2 animate-spin" /> : null}
+                          تحميل المزيد
+                        </Button>
+                      </div>
+                    )}
                   </div>
                 ) : (
                   <div className="text-center py-8 text-muted-foreground">لا توجد منتجات</div>

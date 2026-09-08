@@ -429,10 +429,37 @@ export const firestoreRouter = router({
   // مخزونه، دون أي رسالة أو تفسير. هذا الإجراء الجديد (على غرار
   // getAllBannersAdmin/getAllOrdersAdmin) يُرجع كل المنتجات دون أي استبعاد،
   // محمياً بـadminProcedure (صلاحية أدمن فقط).
-  getAllProductsAdmin: adminPermission("products").query(async ({ ctx }) => {
-    const snapshot = await adminDb.collection("products").orderBy("createdAt", "desc").get();
-    return snapshot.docs.map(doc => toProductDto(doc));
-  }),
+  //
+  // ✅ إصلاح (Pagination حقيقية): كان يجلب كل المنتجات دفعة واحدة بلا أي
+  // limit — مع متجر فيه مئات المنتجات هذا يعني قراءة ضخمة من Firestore
+  // (تكلفة + بطء) في كل فتح لتبويب "المنتجات"، ويكبر مع الوقت بلا حدود.
+  // الآن يتبع بالضبط نفس نمط getAllOrdersAdmin (cursor بـstartAfter على
+  // createdAt + limit(pageLimit + 1) لمعرفة إن كان هناك صفحة تالية).
+  getAllProductsAdmin: adminPermission("products")
+    .input(z.object({
+      cursor: z.string().nullish(),
+      limit: z.number().min(1).max(100).default(30),
+    }).optional())
+    .query(async ({ input }) => {
+      const pageLimit = input?.limit ?? 30;
+      let query: FirebaseFirestore.Query = adminDb.collection("products").orderBy("createdAt", "desc");
+      if (input?.cursor) {
+        query = query.startAfter(new Date(input.cursor));
+      }
+      query = query.limit(pageLimit + 1); // +1 لمعرفة إن كان في صفحة تالية
+
+      const snapshot = await query.get();
+      const docs = snapshot.docs.slice(0, pageLimit);
+      const hasMore = snapshot.docs.length > pageLimit;
+
+      const products = docs.map(doc => toProductDto(doc));
+      const lastDocData = docs[docs.length - 1]?.data();
+      const nextCursor = hasMore && lastDocData?.createdAt
+        ? toIsoStringSafe(lastDocData.createdAt)
+        : null;
+
+      return { products, nextCursor };
+    }),
 
   // --- المنتجات الجديدة (حسب تاريخ الإضافة) ---
   // ⚠️ ملاحظة: لم تعد Products.tsx تستخدم هذا المسار لنفس سبب getBestSellers

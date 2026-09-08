@@ -7,7 +7,10 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Loader2, Send } from "lucide-react";
+import { Loader2, Send, ImagePlus, X } from "lucide-react";
+import { uploadImageToStorage } from "@/lib/imageUpload";
+
+type NotificationTypeOption = "general" | "promo" | "welcome";
 
 function NotificationsContent() {
   const utils = trpc.useUtils();
@@ -16,6 +19,14 @@ function NotificationsContent() {
   const [target, setTarget] = useState<"all" | "user">("all");
   const [targetEmail, setTargetEmail] = useState("");
   const [actionRoute, setActionRoute] = useState("");
+  const [notifType, setNotifType] = useState<NotificationTypeOption>("general");
+
+  // ✅ جديد (صورة العرض): معاينة + حالة رفع منفصلة — لا نسمح بالإرسال قبل
+  // اكتمال الرفع بنجاح (زر الإرسال معطَّل أثناء isUploadingImage أدناه).
+  const [imageFile, setImageFile] = useState<File | null>(null);
+  const [imagePreview, setImagePreview] = useState<string | null>(null);
+  const [uploadedImageUrl, setUploadedImageUrl] = useState<string | null>(null);
+  const [isUploadingImage, setIsUploadingImage] = useState(false);
 
   const { data: foundUser, isFetching: isSearchingUser } = trpc.adminUsers.findUserByEmail.useQuery(
     { email: targetEmail },
@@ -35,10 +46,51 @@ function NotificationsContent() {
       setBody("");
       setTargetEmail("");
       setActionRoute("");
+      setNotifType("general");
+      handleRemoveImage();
       utils.adminNotifications.getHistory.invalidate();
     },
     onError: (err) => toast.error(err.message || "تعذّر إرسال الإشعار"),
   });
+
+  const ALLOWED_IMAGE_TYPES = ["image/jpeg", "image/png", "image/webp"];
+
+  const handleImageSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    e.target.value = ""; // يسمح باختيار نفس الملف مرة أخرى لاحقاً إن أُزيل
+    if (!file) return;
+
+    if (!ALLOWED_IMAGE_TYPES.includes(file.type)) {
+      toast.error("نوع الصورة غير مدعوم — استخدم JPG أو PNG أو WebP فقط");
+      return;
+    }
+    if (file.size > 10 * 1024 * 1024) {
+      toast.error("حجم الصورة يجب ألا يتجاوز 10 ميجابايت");
+      return;
+    }
+
+    setImageFile(file);
+    setImagePreview(URL.createObjectURL(file));
+    setUploadedImageUrl(null);
+    setIsUploadingImage(true);
+    try {
+      const url = await uploadImageToStorage(file, "notifications");
+      setUploadedImageUrl(url);
+    } catch (err: any) {
+      toast.error(err?.message || "تعذّر رفع الصورة");
+      setImageFile(null);
+      setImagePreview(null);
+    } finally {
+      setIsUploadingImage(false);
+    }
+  };
+
+  const handleRemoveImage = () => {
+    setImageFile(null);
+    setImagePreview(null);
+    setUploadedImageUrl(null);
+    setIsUploadingImage(false);
+  };
 
   const handleSend = () => {
     if (!title.trim() || !body.trim()) {
@@ -49,12 +101,20 @@ function NotificationsContent() {
       toast.error("لم يتم العثور على مستخدم بهذا البريد");
       return;
     }
+    // ✅ منع الإرسال قبل اكتمال رفع الصورة بنجاح (كما طُلب) — إن اختار
+    // المستخدم صورة لكن الرفع لا يزال جارياً أو فشل بلا رابط نهائي.
+    if (imageFile && !uploadedImageUrl) {
+      toast.error(isUploadingImage ? "الرجاء الانتظار حتى اكتمال رفع الصورة" : "تعذّر رفع الصورة، أعد المحاولة أو أزلها");
+      return;
+    }
     sendNotification.mutate({
       title: title.trim(),
       body: body.trim(),
       target,
       userId: target === "user" ? foundUser?.uid : undefined,
       actionRoute: actionRoute.trim() || undefined,
+      imageUrl: uploadedImageUrl || undefined,
+      type: notifType,
     });
   };
 
@@ -96,6 +156,18 @@ function NotificationsContent() {
           )}
 
           <div>
+            <label className="text-sm font-medium block mb-1.5">نوع الإشعار</label>
+            <Select value={notifType} onValueChange={(v) => setNotifType(v as NotificationTypeOption)}>
+              <SelectTrigger><SelectValue /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value="general">عام</SelectItem>
+                <SelectItem value="promo">عرض ترويجي</SelectItem>
+                <SelectItem value="welcome">ترحيب</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
+
+          <div>
             <label className="text-sm font-medium block mb-1.5">العنوان</label>
             <Input value={title} onChange={(e) => setTitle(e.target.value)} maxLength={120} />
           </div>
@@ -108,7 +180,43 @@ function NotificationsContent() {
             <Input value={actionRoute} onChange={(e) => setActionRoute(e.target.value)} placeholder="/orders" />
           </div>
 
-          <Button onClick={handleSend} disabled={sendNotification.isPending} className="w-full sm:w-auto">
+          <div>
+            <label className="text-sm font-medium block mb-1.5">صورة العرض (اختياري)</label>
+            {imagePreview ? (
+              <div className="relative w-40">
+                <img src={imagePreview} alt="معاينة الصورة" className="w-40 h-40 object-cover rounded-lg border" />
+                {isUploadingImage && (
+                  <div className="absolute inset-0 bg-black/40 rounded-lg flex items-center justify-center">
+                    <Loader2 className="w-6 h-6 text-white animate-spin" />
+                  </div>
+                )}
+                {!isUploadingImage && (
+                  <button
+                    type="button"
+                    onClick={handleRemoveImage}
+                    className="absolute -top-2 -left-2 bg-destructive text-destructive-foreground rounded-full p-1"
+                  >
+                    <X className="w-3.5 h-3.5" />
+                  </button>
+                )}
+                {uploadedImageUrl && !isUploadingImage && (
+                  <p className="text-xs text-emerald-600 mt-1">تم الرفع بنجاح</p>
+                )}
+              </div>
+            ) : (
+              <label className="flex flex-col items-center justify-center w-40 h-40 border-2 border-dashed rounded-lg cursor-pointer text-muted-foreground hover:bg-muted/50">
+                <ImagePlus className="w-6 h-6 mb-1" />
+                <span className="text-xs">JPG, PNG, WebP</span>
+                <input type="file" accept="image/jpeg,image/png,image/webp" className="hidden" onChange={handleImageSelect} />
+              </label>
+            )}
+          </div>
+
+          <Button
+            onClick={handleSend}
+            disabled={sendNotification.isPending || isUploadingImage}
+            className="w-full sm:w-auto"
+          >
             {sendNotification.isPending ? (
               <Loader2 className="w-4 h-4 ml-2 animate-spin" />
             ) : (
@@ -131,7 +239,12 @@ function NotificationsContent() {
               {history!.map((item) => (
                 <div key={item.id} className="border rounded-lg p-3">
                   <div className="flex justify-between items-start gap-2">
-                    <p className="font-semibold">{item.title}</p>
+                    <div className="flex items-start gap-2">
+                      {item.imageUrl && (
+                        <img src={item.imageUrl} alt="" className="w-10 h-10 object-cover rounded shrink-0" loading="lazy" />
+                      )}
+                      <p className="font-semibold">{item.title}</p>
+                    </div>
                     <span className="text-xs text-muted-foreground shrink-0">
                       {item.createdAt ? new Date(item.createdAt).toLocaleString("ar-EG", { calendar: "gregory" }) : "-"}
                     </span>

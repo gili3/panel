@@ -230,10 +230,13 @@ function UsersContent({ user }: { user: { isSuperAdmin?: boolean } }) {
               </TableBody>
             </Table>
             {!searchEmail && (
-              <div className="flex justify-center gap-2 pt-4">
+              <div className="flex justify-center items-center gap-3 pt-4">
                 <Button variant="outline" size="sm" onClick={goPrev} disabled={pageIndex === 0}>
                   السابق
                 </Button>
+                {/* ✅ جديد: مؤشر رقم الصفحة — pageIndex مبني أصلاً (0-based)،
+                    نعرضه فقط للمستخدم كرقم صفحة مألوف (1-based). */}
+                <span className="text-sm text-muted-foreground">صفحة {pageIndex + 1}</span>
                 <Button variant="outline" size="sm" onClick={goNext} disabled={!data?.nextPageToken}>
                   التالي
                 </Button>

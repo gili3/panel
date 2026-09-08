@@ -7,6 +7,7 @@ import { adminDb } from "./firebase-admin";
 import admin from "firebase-admin";
 import { router, adminPermission } from "./_core/trpc";
 import { notifyUser } from "./notification-service";
+import type { NotificationType } from "@shared/types";
 
 const CHUNK_SIZE = 50; // إرسال على دفعات متوازية محدودة بدل كل المستخدمين مرة واحدة
 
@@ -18,7 +19,7 @@ const CHUNK_SIZE = 50; // إرسال على دفعات متوازية محدود
 // المُرسَل بعد الانتهاء (أو بأي فشل حدث أثناء الإرسال).
 async function broadcastToAllUsersInBackground(
   campaignId: string,
-  input: { title: string; body: string; actionRoute?: string }
+  input: { title: string; body: string; actionRoute?: string; imageUrl?: string; type: NotificationType }
 ) {
   let sentCount = 0;
   let failedCount = 0;
@@ -34,8 +35,9 @@ async function broadcastToAllUsersInBackground(
             dedupeKey: `admin-notify:${campaignId}:${uid}`,
             title: input.title,
             body: input.body,
-            type: "general",
+            type: input.type,
             actionRoute: input.actionRoute,
+            imageUrl: input.imageUrl,
           })
         )
       );
@@ -61,6 +63,11 @@ export const adminNotificationsRouter = router({
       target: z.enum(["all", "user"]),
       userId: z.string().optional(),
       actionRoute: z.string().optional(),
+      // ✅ جديد: صورة اختيارية (بالأخص إشعارات العروض) + نوع الإشعار — كان
+      // "type" مثبَّتاً دائماً على "general" بلا أي طريقة لاختيار "promo"
+      // رغم أن NotificationType تدعمها أصلاً بالسيرفر والعميل والأندرويد.
+      imageUrl: z.string().url().optional(),
+      type: z.enum(["order", "shipping", "promo", "welcome", "general"]).default("general"),
     }))
     .mutation(async ({ ctx, input }) => {
       if (input.target === "user" && !input.userId) {
@@ -75,8 +82,9 @@ export const adminNotificationsRouter = router({
           dedupeKey: `admin-notify:${campaignId}:${input.userId}`,
           title: input.title,
           body: input.body,
-          type: "general",
+          type: input.type,
           actionRoute: input.actionRoute,
+          imageUrl: input.imageUrl,
         });
 
         await adminDb.collection("notificationCampaigns").doc(campaignId).set({
@@ -84,6 +92,8 @@ export const adminNotificationsRouter = router({
           body: input.body,
           target: input.target,
           userId: input.userId ?? null,
+          imageUrl: input.imageUrl ?? null,
+          type: input.type,
           sentCount: 1,
           failedCount: 0,
           status: "done",
@@ -104,6 +114,8 @@ export const adminNotificationsRouter = router({
         body: input.body,
         target: input.target,
         userId: null,
+        imageUrl: input.imageUrl ?? null,
+        type: input.type,
         sentCount: 0,
         failedCount: 0,
         estimatedCount,
@@ -117,6 +129,8 @@ export const adminNotificationsRouter = router({
         title: input.title,
         body: input.body,
         actionRoute: input.actionRoute,
+        imageUrl: input.imageUrl,
+        type: input.type,
       });
 
       return { success: true, sentCount: estimatedCount };
@@ -138,6 +152,8 @@ export const adminNotificationsRouter = router({
         body: data.body,
         target: data.target,
         userId: data.userId ?? null,
+        imageUrl: data.imageUrl ?? null,
+        type: data.type ?? "general",
         sentCount: data.sentCount ?? 0,
         estimatedCount: data.estimatedCount ?? null,
         status: data.status ?? "done",

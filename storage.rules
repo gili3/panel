@@ -28,13 +28,17 @@ service firebase.storage {
     }
 
     // مجلدات صور المتجر — قراءة عامة (تُعرض بالمتجر للجميع)، رفع/حذف للأدمن فقط
+    // ✅ جديد: أُضيف 'notifications' لدعم رفع صورة اختيارية مع إشعارات
+    // العروض من لوحة التحكم (Notifications.tsx) — كانت تُرفض سابقاً بصمت
+    // (permission-denied) لعدم وجودها بالقائمة البيضاء، رغم توفر واجهة الرفع
+    // نفسها (imageUpload.ts) لأي مجلد يُمرَّر لها.
     match /{folder}/{fileName} {
-      allow read: if folder in ['products', 'categories', 'banners', 'brands'];
+      allow read: if folder in ['products', 'categories', 'banners', 'brands', 'notifications'];
 
-      allow create: if folder in ['products', 'categories', 'banners', 'brands'] &&
+      allow create: if folder in ['products', 'categories', 'banners', 'brands', 'notifications'] &&
         isAdmin() && isValidImage();
 
-      allow update, delete: if folder in ['products', 'categories', 'banners', 'brands'] &&
+      allow update, delete: if folder in ['products', 'categories', 'banners', 'brands', 'notifications'] &&
         isAdmin();
     }
 

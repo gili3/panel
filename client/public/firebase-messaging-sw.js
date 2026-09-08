@@ -43,7 +43,7 @@ function buildNotificationOptions(data) {
   // تجميع فعلي فقط لإعادة تسليم *نفس* الحدث بالضبط من FCM (نادر لكن وارد
   // على مستوى الشبكة)، بينما أي حدث مختلف يظهر كإشعار منفصل تماماً كما يجب.
   const tag = data.notificationId || `eleven-store-${data.type || 'general'}-${Date.now()}`;
-  return {
+  const options = {
     body: data.body || '',
     icon: '/notification-icon.png',
     badge: '/badge-icon.png',
@@ -53,6 +53,13 @@ function buildNotificationOptions(data) {
     renotify: true,
     data: { actionRoute },
   };
+  // ✅ جديد: صورة اختيارية (إشعارات العروض غالباً) — مدعومة بـWeb
+  // Notification API عبر خيار "image" (متصفحات تدعمها تعرضها كصورة كبيرة
+  // ضمن الإشعار؛ المتصفحات غير الداعمة تتجاهل الخيار بأمان بلا أي كسر).
+  if (data.imageUrl) {
+    options.image = data.imageUrl;
+  }
+  return options;
 }
 
 // ⚠️ السيرفر يرسل رسائل "data-only" حصراً (بدون حقل notification أعلى

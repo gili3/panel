@@ -13,6 +13,7 @@ type RawNotificationDoc = {
   type?: NotificationType;
   isRead?: boolean;
   actionRoute?: string;
+  imageUrl?: string;
   createdAt?: { toDate?: () => Date } | Date | null;
 };
 
@@ -74,6 +75,7 @@ export function useNotifications() {
             type: (data.type as NotificationType) || "general",
             isRead: !!data.isRead,
             actionRoute: data.actionRoute,
+            imageUrl: data.imageUrl,
             createdAt: toDate(data.createdAt),
           };
         });

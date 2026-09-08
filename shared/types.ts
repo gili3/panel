@@ -87,5 +87,7 @@ export type AppNotification = {
   isRead: boolean;
   /** مسار داخلي يُفتح عند الضغط على الإشعار، مثال: "/order/abc123" */
   actionRoute?: string;
+  /** رابط صورة اختيارية تُعرض مع الإشعار (بالأخص إشعارات العروض/promo) */
+  imageUrl?: string;
   createdAt: Date;
 };

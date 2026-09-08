@@ -17,8 +17,22 @@ import {
 // الشبكة أو محاولات فاشلة متكررة بسبب خطأ كلمة مرور بصفحة تسجيل الدخول).
 const loginRateLimit = simpleRateLimit("session-login", 20, 15 * 60 * 1000);
 
-function roleFor(uid: string): "admin" | "user" {
-  return ENV.ownerOpenId && uid === ENV.ownerOpenId ? "admin" : "user";
+// ✅ إصلاح: كانت هذه الدالة تتحقق فقط من OWNER_OPEN_ID، بعكس buildUser() في
+// context.ts التي تتحقق أيضاً من حقل users/{uid}.role بـFirestore لدعم أدمنز
+// متعددين. النتيجة: أي أدمن غير صاحب المتجر كان يظهر له "لا تملك صلاحيات
+// كافية" لحظياً عبر المسار السريع (whoami) عند فتح اللوحة أو تحديث الصفحة،
+// قبل أن يصل رد trpc.auth.me الصحيح ويصحّح الوضع — إرباك حقيقي لأي أدمن
+// غير المالك رغم أن صلاحياته الفعلية سليمة عبر tRPC. الآن تقرأ نفس الحقل.
+async function roleFor(uid: string): Promise<"admin" | "user"> {
+  if (ENV.ownerOpenId && uid === ENV.ownerOpenId) return "admin";
+  try {
+    const snap = await adminDb.collection("users").doc(uid).get();
+    const data = snap.data();
+    if (data?.role === "admin" && !data?.disabled) return "admin";
+  } catch (error) {
+    console.error("[Session] فشل قراءة دور المستخدم من Firestore (whoami):", error);
+  }
+  return "user";
 }
 
 // ✅ إصلاح حرج: الدور الإداري كان يُحسب فقط لحظياً هنا وبـcontext.ts (مقارنة
@@ -104,7 +118,7 @@ export function registerSessionRoutes(app: Express) {
           openId: decoded.uid,
           email: decoded.email,
           name: decoded.name,
-          role: roleFor(decoded.uid),
+          role: await roleFor(decoded.uid),
         },
       });
     } catch {

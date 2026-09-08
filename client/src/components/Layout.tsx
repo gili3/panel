@@ -1,8 +1,18 @@
-import { ReactNode } from "react";
+import { ReactNode, useState } from "react";
 import { useLocation } from "wouter";
 import { useAuth } from "@/_core/hooks/useAuth";
 import { Button } from "@/components/ui/button";
 import { LogOut, ShieldCheck } from "lucide-react";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 
 interface LayoutProps {
   children: ReactNode;
@@ -13,8 +23,11 @@ interface LayoutProps {
 export default function Layout({ children }: LayoutProps) {
   const { user, logout } = useAuth();
   const [, setLocation] = useLocation();
+  // ✅ إصلاح: تسجيل الخروج كان يحدث فوراً بضغطة واحدة على الزر بلا أي تأكيد.
+  const [showLogoutConfirm, setShowLogoutConfirm] = useState(false);
 
   const handleLogout = async () => {
+    setShowLogoutConfirm(false);
     await logout();
     setLocation("/login");
   };
@@ -32,7 +45,7 @@ export default function Layout({ children }: LayoutProps) {
               {user.email && (
                 <span className="hidden sm:inline text-sm text-muted-foreground">{user.email}</span>
               )}
-              <Button variant="ghost" size="sm" onClick={handleLogout}>
+              <Button variant="ghost" size="sm" onClick={() => setShowLogoutConfirm(true)}>
                 <LogOut className="w-4 h-4 ml-1" />
                 خروج
               </Button>
@@ -41,6 +54,21 @@ export default function Layout({ children }: LayoutProps) {
         </header>
       )}
       <main className="flex-1">{children}</main>
+
+      <AlertDialog open={showLogoutConfirm} onOpenChange={setShowLogoutConfirm}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>تسجيل الخروج</AlertDialogTitle>
+            <AlertDialogDescription>
+              هل أنت متأكد أنك تريد تسجيل الخروج من لوحة التحكم؟
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>إلغاء</AlertDialogCancel>
+            <AlertDialogAction onClick={handleLogout}>تسجيل الخروج</AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }

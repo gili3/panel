@@ -178,6 +178,15 @@ service cloud.firestore {
       // لتفادي أي التباس أو تسابق مع الزيادة الذرّية بالسيرفر).
       allow update: if isOwner(userId) &&
         (!("role" in request.resource.data) || unchanged("role")) &&
+        // ✅ إصلاح (لوحة التحكم — أدمنز متعددون): بنفس منطق role تمامًا —
+        // adminPermissions محسوبة من role أصلاً فلا خطر تصعيد صلاحيات مباشر
+        // منها بمفردها، لكن disabled كان بلا حماية: أدمن أو مستخدم محظور
+        // كان يقدر يعيد disabled لـfalse بنفسه عبر Client SDK مباشرة (الحظر
+        // الحقيقي عبر Firebase Auth disabled يبقى فعّالاً دائماً ولا يتأثر،
+        // لكن سياق تسجيل الدخول بالسيرفر كان سيثق بالنسخة المزوَّرة هنا حتى
+        // تنتهي صلاحية الجلسة القديمة).
+        (!("adminPermissions" in request.resource.data) || unchanged("adminPermissions")) &&
+        (!("disabled" in request.resource.data) || unchanged("disabled")) &&
         !("notifUnreadCount" in request.resource.data) &&
         (!("fcmTokens" in request.resource.data) ||
           (request.resource.data.fcmTokens is list &&

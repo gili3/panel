@@ -2,7 +2,7 @@
 import Layout from "@/components/Layout";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Tabs, TabsContent } from "@/components/ui/tabs";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
@@ -21,6 +21,11 @@ import { toast } from "sonner";
 import { getOrderStatusConfig } from "@/lib/orderStatus";
 import { formatNumber } from "@/lib/formatters";
 import { uploadMultipleImages, deleteImageFromStorage, compressImage, uploadImageToStorage } from "@/lib/imageUpload";
+import { db } from "@/lib/firebase";
+import { collection, onSnapshot, orderBy, limit as fsLimit, query as fsQuery } from "firebase/firestore";
+import { useRoute } from "wouter";
+import AdminSidebar from "@/components/AdminSidebar";
+import { ADMIN_SECTIONS } from "@/lib/adminSections";
 
 interface ProductFormData {
   id: string;
@@ -208,6 +213,13 @@ export default function AdminDashboard() {
     redirectPath: "/login",
   });
 
+  // ✅ الآن كل قسم له رابط حقيقي خاص به (/products، /orders...) بدل تابات
+  // بحالة داخلية فقط — قابل للمشاركة، ويعمل معه زر الرجوع بالمتصفح.
+  const VALID_TAB_KEYS = ["products", "orders", "categories", "banners", "brands", "coupons", "settings"];
+  const [, routeParams] = useRoute<{ section?: string }>("/:section?");
+  const rawSection = routeParams?.section;
+  const sectionKey = rawSection && VALID_TAB_KEYS.includes(rawSection) ? rawSection : "overview";
+
   const productImageInputRef = useRef<HTMLInputElement>(null);
   const categoryImageInputRef = useRef<HTMLInputElement>(null);
   const bannerImageInputRef = useRef<HTMLInputElement>(null);
@@ -297,10 +309,65 @@ export default function AdminDashboard() {
   const { data: brands = [], isLoading: isBrandsLoading } = trpc.firestore.getBrands.useQuery(undefined, {
     enabled: !!user && user.role === "admin",
   });
-  const { data: allOrders = [], isLoading: isOrdersLoading } = trpc.firestore.getAllOrdersAdmin.useQuery(
+  // ✅ Pagination حقيقية: نجلب أول صفحة عبر useQuery، ثم نراكم صفحات إضافية
+  // يدويًا عبر "تحميل المزيد" (utils.fetch) بدل جلب كل الطلبات دفعة واحدة.
+  const [loadedOrders, setLoadedOrders] = useState<any[]>([]);
+  const [ordersCursor, setOrdersCursor] = useState<string | null>(null);
+  const [isLoadingMoreOrders, setIsLoadingMoreOrders] = useState(false);
+  const { data: firstOrdersPage, isLoading: isOrdersLoading } = trpc.firestore.getAllOrdersAdmin.useQuery(
     { status: orderStatusFilter as any },
     { enabled: !!user && user.role === "admin" }
   );
+  useEffect(() => {
+    if (firstOrdersPage) {
+      setLoadedOrders(firstOrdersPage.orders);
+      setOrdersCursor(firstOrdersPage.nextCursor);
+    }
+  }, [firstOrdersPage]);
+  const allOrders = loadedOrders;
+  const loadMoreOrders = async () => {
+    if (!ordersCursor || isLoadingMoreOrders) return;
+    setIsLoadingMoreOrders(true);
+    try {
+      const page = await utils.firestore.getAllOrdersAdmin.fetch({
+        status: orderStatusFilter as any,
+        cursor: ordersCursor,
+      });
+      setLoadedOrders((prev) => [...prev, ...page.orders]);
+      setOrdersCursor(page.nextCursor);
+    } catch (err: any) {
+      toast.error(err?.message || "تعذّر تحميل المزيد من الطلبات");
+    } finally {
+      setIsLoadingMoreOrders(false);
+    }
+  };
+
+  // ✅ تحديث لحظي: نراقب أحدث طلب بالمجموعة مباشرة عبر Firestore (بلا تمرير
+  // بـtRPC) لنعرف فور وصول طلب جديد دون أي إعادة تحميل يدوية — فقط تنبيه
+  // بزر "تحديث"، لا نُدرج الطلب تلقائيًا حتى لا تتحرك القائمة تحت يد الأدمن.
+  const [hasNewOrders, setHasNewOrders] = useState(false);
+  const latestKnownOrderIdRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (!user || user.role !== "admin") return;
+    const q = fsQuery(collection(db, "orders"), orderBy("createdAt", "desc"), fsLimit(1));
+    const unsubscribe = onSnapshot(q, (snap) => {
+      const latest = snap.docs[0];
+      if (!latest) return;
+      if (latestKnownOrderIdRef.current === null) {
+        latestKnownOrderIdRef.current = latest.id;
+        return;
+      }
+      if (latest.id !== latestKnownOrderIdRef.current) {
+        latestKnownOrderIdRef.current = latest.id;
+        setHasNewOrders(true);
+      }
+    });
+    return () => unsubscribe();
+  }, [user]);
+  const refreshOrdersNow = () => {
+    setHasNewOrders(false);
+    utils.firestore.getAllOrdersAdmin.invalidate();
+  };
   const { data: stats = {} as any } = trpc.firestore.getAdminStats.useQuery(undefined, {
     enabled: !!user && user.role === "admin",
   });
@@ -843,9 +910,14 @@ export default function AdminDashboard() {
 
   return (
     <Layout>
-      <div className="container py-8">
-        <h1 className="text-3xl font-bold text-foreground mb-8">لوحة التحكم</h1>
+      <div className="container py-8 flex flex-col md:flex-row gap-6">
+        <AdminSidebar activeKey={sectionKey} user={user} />
+        <div className="flex-1 min-w-0">
+        <h1 className="text-3xl font-bold text-foreground mb-8">
+          {ADMIN_SECTIONS.find((s) => s.key === sectionKey)?.label ?? "لوحة التحكم"}
+        </h1>
 
+        {sectionKey === "overview" && (
         <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-8">
           <StatCard
             title="إجمالي المبيعات"
@@ -942,20 +1014,9 @@ export default function AdminDashboard() {
             )}
           </StatCard>
         </div>
+        )}
 
-        <Tabs defaultValue="products" className="w-full">
-          <div className="overflow-x-auto pb-2 mb-4">
-            <TabsList className="flex w-max md:w-full">
-              <TabsTrigger value="products" className="flex-1 min-w-[90px]">المنتجات</TabsTrigger>
-              <TabsTrigger value="orders" className="flex-1 min-w-[90px]">الطلبات</TabsTrigger>
-              <TabsTrigger value="categories" className="flex-1 min-w-[90px]">التصنيفات</TabsTrigger>
-              <TabsTrigger value="banners" className="flex-1 min-w-[90px]">البانرات</TabsTrigger>
-              <TabsTrigger value="brands" className="flex-1 min-w-[90px]">العلامات</TabsTrigger>
-              <TabsTrigger value="coupons" className="flex-1 min-w-[90px]">الكوبونات</TabsTrigger>
-              <TabsTrigger value="settings" className="flex-1 min-w-[90px]">الإعدادات</TabsTrigger>
-            </TabsList>
-          </div>
-
+        <Tabs value={sectionKey} className="w-full">
           {/* Products Tab */}
           <TabsContent value="products" className="mt-6">
             <Card>
@@ -1204,6 +1265,12 @@ export default function AdminDashboard() {
                 </div>
               </CardHeader>
               <CardContent>
+                {hasNewOrders && (
+                  <div className="mb-4 flex items-center justify-between gap-3 rounded-lg border border-primary/30 bg-primary/5 px-4 py-2.5 text-sm">
+                    <span className="font-medium text-primary">وصل طلب جديد</span>
+                    <Button size="sm" onClick={refreshOrdersNow}>تحديث القائمة</Button>
+                  </div>
+                )}
                 {isOrdersLoading ? (
                   <div className="flex justify-center py-8"><Loader2 className="animate-spin" /></div>
                 ) : allOrders.length > 0 ? (
@@ -1268,6 +1335,14 @@ export default function AdminDashboard() {
                         ))}
                       </TableBody>
                     </Table>
+                    {ordersCursor && (
+                      <div className="flex justify-center pt-4">
+                        <Button variant="outline" onClick={loadMoreOrders} disabled={isLoadingMoreOrders}>
+                          {isLoadingMoreOrders ? <Loader2 className="w-4 h-4 ml-2 animate-spin" /> : null}
+                          تحميل المزيد
+                        </Button>
+                      </div>
+                    )}
                   </div>
                 ) : (
                   <div className="text-center py-8 text-muted-foreground">لا توجد طلبات</div>
@@ -1860,6 +1935,7 @@ export default function AdminDashboard() {
             </div>
           </TabsContent>
         </Tabs>
+        </div>
       </div>
     </Layout>
   );

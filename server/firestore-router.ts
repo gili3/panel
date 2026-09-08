@@ -1,6 +1,6 @@
 import { adminDb, adminAuth } from "./firebase-admin";
 import admin from "firebase-admin";
-import { publicProcedure, router, protectedProcedure, adminProcedure } from "./_core/trpc";
+import { publicProcedure, router, protectedProcedure, adminProcedure, adminPermission } from "./_core/trpc";
 import { z } from "zod";
 import { TRPCError } from "@trpc/server";
 import { randomBytes } from "node:crypto";
@@ -244,12 +244,12 @@ export const firestoreRouter = router({
       };
     }),
 
-  getCoupons: adminProcedure.query(async ({ ctx }) => {
+  getCoupons: adminPermission("coupons").query(async ({ ctx }) => {
     const snapshot = await adminDb.collection("coupons").orderBy("createdAt", "desc").get();
     return snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
   }),
 
-  createCoupon: adminProcedure
+  createCoupon: adminPermission("coupons")
     .input(z.object({
       code: z.string().min(1),
       discountType: z.enum(["percentage", "fixed"]),
@@ -280,7 +280,7 @@ export const firestoreRouter = router({
       return { success: true, code };
     }),
 
-  updateCoupon: adminProcedure
+  updateCoupon: adminPermission("coupons")
     .input(z.object({
       code: z.string().min(1),
       discountType: z.enum(["percentage", "fixed"]).optional(),
@@ -298,7 +298,7 @@ export const firestoreRouter = router({
       return { success: true };
     }),
 
-  deleteCoupon: adminProcedure
+  deleteCoupon: adminPermission("coupons")
     .input(z.object({ code: z.string().min(1) }))
     .mutation(async ({ input, ctx }) => {
       await adminDb.collection("coupons").doc(input.code.trim().toUpperCase()).delete();
@@ -317,7 +317,7 @@ export const firestoreRouter = router({
     return snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
   }),
 
-  createBrand: adminProcedure
+  createBrand: adminPermission("brands")
     .input(z.object({
       name: z.string(),
       logo: z.string(),
@@ -332,7 +332,7 @@ export const firestoreRouter = router({
       return { id: docRef.id, success: true };
     }),
 
-  updateBrand: adminProcedure
+  updateBrand: adminPermission("brands")
     .input(z.object({
       id: z.string(),
       name: z.string().optional(),
@@ -348,7 +348,7 @@ export const firestoreRouter = router({
       return { success: true };
     }),
 
-  deleteBrand: adminProcedure
+  deleteBrand: adminPermission("brands")
     .input(z.object({ id: z.string() }))
     .mutation(async ({ input, ctx }) => {
       await adminDb.collection("brands").doc(input.id).delete();
@@ -429,7 +429,7 @@ export const firestoreRouter = router({
   // مخزونه، دون أي رسالة أو تفسير. هذا الإجراء الجديد (على غرار
   // getAllBannersAdmin/getAllOrdersAdmin) يُرجع كل المنتجات دون أي استبعاد،
   // محمياً بـadminProcedure (صلاحية أدمن فقط).
-  getAllProductsAdmin: adminProcedure.query(async ({ ctx }) => {
+  getAllProductsAdmin: adminPermission("products").query(async ({ ctx }) => {
     const snapshot = await adminDb.collection("products").orderBy("createdAt", "desc").get();
     return snapshot.docs.map(doc => toProductDto(doc));
   }),
@@ -942,7 +942,7 @@ export const firestoreRouter = router({
     return doc.exists ? doc.data() : null;
   }),
 
-  updateStoreSettings: adminProcedure
+  updateStoreSettings: adminPermission("settings")
     .input(z.object({
       storeName: z.string().optional(),
       phone: z.string().optional(),
@@ -980,12 +980,12 @@ export const firestoreRouter = router({
     return snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
   }),
 
-  getAllBannersAdmin: adminProcedure.query(async ({ ctx }) => {
+  getAllBannersAdmin: adminPermission("banners").query(async ({ ctx }) => {
     const snapshot = await adminDb.collection("banners").orderBy("order", "asc").get();
     return snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
   }),
 
-  createBanner: adminProcedure
+  createBanner: adminPermission("banners")
     .input(z.object({
       title: z.string(),
       description: z.string(),
@@ -1003,7 +1003,7 @@ export const firestoreRouter = router({
       return { id: docRef.id, success: true };
     }),
 
-  updateBanner: adminProcedure
+  updateBanner: adminPermission("banners")
     .input(z.object({
       id: z.string(),
       title: z.string().optional(),
@@ -1022,7 +1022,7 @@ export const firestoreRouter = router({
       return { success: true };
     }),
 
-  deleteBanner: adminProcedure
+  deleteBanner: adminPermission("banners")
     .input(z.object({ id: z.string() }))
     .mutation(async ({ input, ctx }) => {
       await adminDb.collection("banners").doc(input.id).delete();
@@ -1030,7 +1030,7 @@ export const firestoreRouter = router({
     }),
 
   // --- إدارة التصنيفات ---
-  createCategory: adminProcedure
+  createCategory: adminPermission("categories")
     .input(z.object({
       name: z.string(),
       description: z.string().optional(),
@@ -1046,7 +1046,7 @@ export const firestoreRouter = router({
       return { id: docRef.id, success: true };
     }),
 
-  updateCategory: adminProcedure
+  updateCategory: adminPermission("categories")
     .input(z.object({
       id: z.string(),
       name: z.string().optional(),
@@ -1063,7 +1063,7 @@ export const firestoreRouter = router({
       return { success: true };
     }),
 
-  deleteCategory: adminProcedure
+  deleteCategory: adminPermission("categories")
     .input(z.object({ id: z.string() }))
     .mutation(async ({ input, ctx }) => {
       await adminDb.collection("categories").doc(input.id).delete();
@@ -1071,7 +1071,7 @@ export const firestoreRouter = router({
     }),
 
   // --- إدارة المنتجات ---
-  createProduct: adminProcedure
+  createProduct: adminPermission("products")
     .input(z.object({
       name: z.string(),
       description: z.string(),
@@ -1106,7 +1106,7 @@ export const firestoreRouter = router({
       return { id: docRef.id, success: true };
     }),
 
-  updateProduct: adminProcedure
+  updateProduct: adminPermission("products")
     .input(z.object({
       id: z.string(),
       name: z.string().optional(),
@@ -1141,7 +1141,7 @@ export const firestoreRouter = router({
       return { success: true };
     }),
 
-  deleteProduct: adminProcedure
+  deleteProduct: adminPermission("products")
     .input(z.object({ id: z.string() }))
     .mutation(async ({ input, ctx }) => {
       await adminDb.collection("products").doc(input.id).delete();
@@ -1150,9 +1150,13 @@ export const firestoreRouter = router({
     }),
 
   // --- إدارة الطلبات ---
-  getAllOrdersAdmin: adminProcedure
+  getAllOrdersAdmin: adminPermission("orders")
     .input(z.object({
       status: z.enum(['all', 'pending', 'paid', 'shipped', 'delivered', 'cancelled']).optional(),
+      // ✅ Pagination حقيقية (startAfter) بدل جلب دفعة واحدة ثابتة: مرّر
+      // createdAt (بصيغة ISO) لآخر طلب ظهر بالصفحة السابقة لجلب ما بعده.
+      cursor: z.string().nullish(),
+      limit: z.number().min(1).max(100).default(30),
     }).optional())
     .query(async ({ ctx, input }) => {
 
@@ -1160,23 +1164,21 @@ export const firestoreRouter = router({
       // على مجموعة "orders" بـ Firestore Console. تأكد أنه Enabled قبل النشر.
       // (✅ الآن معرَّف أيضاً بملف firestore.indexes.json القابل للنشر بأمر واحد
       // بدل الاعتماد فقط على إنشائه يدوياً من رابط خطأ بالـConsole).
-      //
-      // ✅ إصلاح (Audit المرحلة 5): لم يكن هناك أي حد — كل فتح لتبويب "الطلبات"
-      // بلوحة التحكم كان يجلب كل طلب سُجِّل بالمتجر منذ أول يوم دفعة واحدة.
-      // 500 كحد أقصى يغطي فعلياً أي متجر متوسط الحجم دون إبطاء اللوحة. الحل
-      // الكامل طويل المدى: صفحات فعلية (startAfter) بدل رفع الرقم فقط —
-      // موصى به ضمن المرحلة 12 (الشاشات) حين تُراجَع واجهة لوحة التحكم.
-      const ORDERS_ADMIN_LIMIT = 500;
-      let query: any = adminDb.collection("orders").orderBy("createdAt", "desc").limit(ORDERS_ADMIN_LIMIT);
+      const pageLimit = input?.limit ?? 30;
+      let query: any = adminDb.collection("orders").orderBy("createdAt", "desc");
       if (input?.status && input.status !== 'all') {
-        query = adminDb.collection("orders")
-          .where("status", "==", input.status)
-          .orderBy("createdAt", "desc")
-          .limit(ORDERS_ADMIN_LIMIT);
+        query = query.where("status", "==", input.status);
       }
+      if (input?.cursor) {
+        query = query.startAfter(new Date(input.cursor));
+      }
+      query = query.limit(pageLimit + 1); // +1 لمعرفة إن كان في صفحة تالية
 
       const snapshot = await query.get();
-      return snapshot.docs.map((doc: any) => {
+      const docs = snapshot.docs.slice(0, pageLimit);
+      const hasMore = snapshot.docs.length > pageLimit;
+
+      const orders = docs.map((doc: any) => {
         const data = doc.data();
         return {
           id: doc.id,
@@ -1191,9 +1193,16 @@ export const firestoreRouter = router({
           updatedAt: toIsoStringSafe(data?.updatedAt),
         };
       });
+
+      const lastDoc = docs[docs.length - 1]?.data();
+      const nextCursor = hasMore && lastDoc?.createdAt
+        ? toIsoStringSafe(lastDoc.createdAt)
+        : null;
+
+      return { orders, nextCursor };
     }),
 
-  updateOrderStatus: adminProcedure
+  updateOrderStatus: adminPermission("orders")
     .input(z.object({
       id: z.string(),
       status: z.enum(['pending', 'paid', 'shipped', 'delivered', 'cancelled']),
@@ -1262,7 +1271,7 @@ export const firestoreRouter = router({
       return { success: true };
     }),
 
-  deleteOrder: adminProcedure
+  deleteOrder: adminPermission("orders")
     .input(z.object({ id: z.string() }))
     .mutation(async ({ input, ctx }) => {
       await adminDb.collection("orders").doc(input.id).delete();

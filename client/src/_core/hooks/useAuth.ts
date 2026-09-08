@@ -122,6 +122,8 @@ export function useAuth(options?: UseAuthOptions) {
       name: profileDoc?.name || firebaseUser.displayName || "",
       phone: profileDoc?.phone || "",
       role: serverUser?.role || "user",
+      isSuperAdmin: Boolean((serverUser as any)?.isSuperAdmin),
+      permissions: (serverUser as any)?.permissions ?? [],
     };
     setUser(enrichedUser);
   }, [firebaseUser, serverUser, profileDoc]);

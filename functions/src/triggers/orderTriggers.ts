@@ -1,5 +1,6 @@
 import { onDocumentCreated, onDocumentUpdated } from "firebase-functions/v2/firestore";
 import { notify } from "../lib/notifications";
+import { db } from "../lib/admin";
 
 /**
  * ELEVEN STORE — إشعارات الطلبات v2 (Cloud Functions Firestore Triggers)
@@ -46,6 +47,42 @@ const ORDER_STATUS_NOTIF_TYPE: Record<string, "shipping" | "order" | "general"> 
   cancelled: "general",
 };
 
+/**
+ * ✅ إصلاح (بعد إضافة نظام أدمنز متعددين بلوحة التحكم): كان الإشعار يعتمد
+ * حصراً على متغيّر بيئة OWNER_OPEN_ID — بخلاف السيرفر (Express) الذي يقرأه
+ * من ملف .env الخاص به، Cloud Functions لها إعدادات بيئة منفصلة تماماً،
+ * ومن السهل ضبطه في مكان ونسيانه بالتاني، فكان يتسبب بصمت في توقف كل
+ * إشعارات "طلب جديد" دون أي خطأ ظاهر عدا سطر تحذير بالـlogs.
+ * الحل: لا نعتمد على متغيّر البيئة وحده — نجمع بين صاحب المتجر (إن كان
+ * مضبوطاً) وكل الأدمنز الآخرين المسجَّلين فعلياً بـFirestore (role == "admin")
+ * ممن يملكون صلاحية "orders" تحديداً (تجنّباً لإزعاج أدمن مخصّص لقسم آخر
+ * فقط، مثل البانرات، بإشعارات لا تخصه).
+ */
+async function getOrderAdminUidsToNotify(): Promise<string[]> {
+  const uids = new Set<string>();
+  const ownerUid = process.env.OWNER_OPEN_ID || "";
+  if (ownerUid) uids.add(ownerUid);
+
+  try {
+    const snapshot = await db.collection("users").where("role", "==", "admin").get();
+    for (const doc of snapshot.docs) {
+      const data = doc.data();
+      const permissions: unknown = data.adminPermissions;
+      if (Array.isArray(permissions) && permissions.includes("orders")) {
+        uids.add(doc.id);
+      }
+    }
+  } catch (error) {
+    console.error("[onOrderCreated] فشل جلب قائمة الأدمنز من Firestore:", error);
+  }
+
+  if (uids.size === 0) {
+    console.warn("[onOrderCreated] لا يوجد أي أدمن لإشعاره (لا OWNER_OPEN_ID ولا أدمنز بصلاحية orders)");
+  }
+  return [...uids];
+}
+
+
 /** طلب جديد: إشعار للعميل بالاستلام + إشعار لصاحب المتجر بطلب جديد. */
 export const onOrderCreated = onDocumentCreated("orders/{orderId}", async (event) => {
   const snap = event.data;
@@ -55,7 +92,6 @@ export const onOrderCreated = onDocumentCreated("orders/{orderId}", async (event
   const customerId: string | undefined = order.userId;
   const orderNumber: string = order.orderNumber ? String(order.orderNumber) : orderId.slice(0, 8);
   const actionRoute = `/order/${orderId}`;
-  const ownerUid = process.env.OWNER_OPEN_ID || "";
 
   const tasks: Promise<unknown>[] = [];
 
@@ -76,11 +112,13 @@ export const onOrderCreated = onDocumentCreated("orders/{orderId}", async (event
     console.warn(`[onOrderCreated] الطلب ${orderId} بلا userId — تم تجاهل إشعار العميل`);
   }
 
-  if (ownerUid && ownerUid !== customerId) {
+  const adminUids = await getOrderAdminUidsToNotify();
+  for (const adminUid of adminUids) {
+    if (adminUid === customerId) continue; // العميل نفسه أدمن (نادر) — إشعار العميل أعلاه يكفيه
     tasks.push(
       notify({
-        userId: ownerUid,
-        dedupeKey: `order_created:admin:${orderId}`,
+        userId: adminUid,
+        dedupeKey: `order_created:admin:${orderId}:${adminUid}`,
         type: "order",
         title: "طلب جديد",
         body: `تم استلام طلب جديد رقم #${orderNumber}`,
@@ -89,8 +127,6 @@ export const onOrderCreated = onDocumentCreated("orders/{orderId}", async (event
         entityId: orderId,
       })
     );
-  } else if (!ownerUid) {
-    console.warn("[onOrderCreated] OWNER_OPEN_ID غير مُهيّأ بإعدادات Cloud Functions — لن يصل إشعار الطلب الجديد للأدمن");
   }
 
   await Promise.all(tasks);

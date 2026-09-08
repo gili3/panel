@@ -9,16 +9,18 @@ import { ThemeProvider } from "./contexts/ThemeContext";
 import { LanguageProvider } from "./contexts/LanguageContext";
 import AdminDashboard from "./pages/AdminDashboard";
 import Login from "./pages/Login";
+import Users from "./pages/Users";
+import Notifications from "./pages/Notifications";
 
-// موقع لوحة التحكم مستقل تمامًا عن موقع العملاء: لا صفحات تسوّق هنا إطلاقاً،
-// فقط تسجيل الدخول والداشبورد نفسه (الذي يتحقق داخليًا من الجلسة ومن أن
-// دور المستخدم "admin" قبل عرض أي بيانات).
+// موقع لوحة التحكم مستقل تمامًا عن موقع العملاء: لا صفحات تسوّق هنا إطلاقاً.
+// كل قسم إداري له رابط حقيقي خاص به الآن (/products، /orders، /users...).
 function Router() {
   return (
     <Switch>
       <Route path={"/login"} component={Login} />
-      <Route path={"/"} component={AdminDashboard} />
-      <Route path={"/404"} component={NotFound} />
+      <Route path={"/users"} component={Users} />
+      <Route path={"/notifications"} component={Notifications} />
+      <Route path={"/:section?"} component={AdminDashboard} />
       <Route component={NotFound} />
     </Switch>
   );

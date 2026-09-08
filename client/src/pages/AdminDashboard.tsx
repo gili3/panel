@@ -209,10 +209,7 @@ function StatCard({
 }
 
 export default function AdminDashboard() {
-  const { user, loading, roleLoading, logout } = useAuth({
-    redirectOnUnauthenticated: true,
-    redirectPath: "/login",
-  });
+  const { user, loading, roleLoading, logout } = useAuth();
 
   // ✅ الآن كل قسم له رابط حقيقي خاص به (/products، /orders...) بدل تابات
   // بحالة داخلية فقط — قابل للمشاركة، ويعمل معه زر الرجوع بالمتصفح.

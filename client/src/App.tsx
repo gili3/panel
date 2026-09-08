@@ -7,6 +7,7 @@ import { toast } from "sonner";
 import ErrorBoundary from "./components/ErrorBoundary";
 import { ThemeProvider } from "./contexts/ThemeContext";
 import { LanguageProvider } from "./contexts/LanguageContext";
+import { AuthProvider } from "./_core/hooks/useAuth";
 import AdminDashboard from "./pages/AdminDashboard";
 import Login from "./pages/Login";
 import Users from "./pages/Users";
@@ -59,7 +60,9 @@ function App() {
         <TooltipProvider>
           <Toaster />
           <OfflineIndicator />
-          <Router />
+          <AuthProvider>
+            <Router />
+          </AuthProvider>
         </TooltipProvider>
       </ThemeProvider>
       </LanguageProvider>

@@ -14,10 +14,7 @@ interface AdminGuardProps {
 // السايدبار (مفلترة حسب صلاحيات الأدمن الحالي) — منطق واحد بدل تكراره في كل
 // صفحة (كان مكرراً 4 مرات داخل AdminDashboard.tsx وحدها).
 export default function AdminGuard({ activeKey, children }: AdminGuardProps) {
-  const { user, loading, roleLoading, logout } = useAuth({
-    redirectOnUnauthenticated: true,
-    redirectPath: "/login",
-  });
+  const { user, loading, roleLoading, logout } = useAuth();
 
   if (loading || roleLoading) {
     return (

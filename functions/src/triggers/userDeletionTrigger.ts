@@ -1,5 +1,7 @@
 import * as functionsV1 from "firebase-functions/v1";
 import { db } from "../lib/admin";
+import { sendMail } from "../lib/mailer";
+import { accountDeletedTemplate } from "../lib/emailTemplates";
 
 /**
  * ELEVEN STORE — تنظيف بيانات المستخدم عند حذف الحساب
@@ -52,5 +54,20 @@ export const onUserDeleted = functionsV1.auth.user().onDelete(async (user) => {
     // فيه) يجب ألا يظهر كفشل "غامض" في سجلات Cloud Functions بلا سياق —
     // نسجّله بوضوح ليكون قابلاً للمتابعة يدوياً إن تكرر.
     console.error(`[onUserDeleted] فشل تنظيف بيانات المستخدم ${uid}:`, err);
+  }
+
+  // ✅ رسالة تأكيد الحذف: تُرسَل من هنا تحديداً (auth trigger واحد لكل حذف
+  // حساب، بصرف النظر عن المنصة أو المسار الذي بدأ الحذف — الموقع، تطبيق
+  // الأندرويد، أو حتى حذف يدوي من Firebase Console) بدل تكرار استدعاء
+  // الإرسال بكل مكان يستدعي deleteUser(). user.email هنا هو بريد الحساب
+  // وقت حذفه فعلياً (UserRecord الممرَّر لـonDelete)، فلا حاجة لأي قراءة
+  // إضافية من Firestore (التي حُذفت أعلاه أصلاً).
+  if (user.email) {
+    try {
+      const { subject, html } = accountDeletedTemplate();
+      await sendMail({ to: user.email, subject, html });
+    } catch (err) {
+      console.error(`[onUserDeleted] فشل إرسال رسالة تأكيد الحذف لـ ${uid}:`, err);
+    }
   }
 });

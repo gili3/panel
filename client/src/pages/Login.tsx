@@ -5,8 +5,9 @@ import { Input } from "@/components/ui/input";
 import { Card, CardContent } from "@/components/ui/card";
 import { Mail, Lock, Loader2, Eye, EyeOff } from "lucide-react";
 import Layout from "@/components/Layout";
-import { auth } from "@/lib/firebase";
-import { signInWithEmailAndPassword, GoogleAuthProvider, signInWithPopup, sendPasswordResetEmail } from "firebase/auth";
+import { auth, functions } from "@/lib/firebase";
+import { signInWithEmailAndPassword, GoogleAuthProvider, signInWithPopup } from "firebase/auth";
+import { httpsCallable } from "firebase/functions";
 import { toast } from "sonner";
 import { establishServerSession } from "@/lib/session";
 
@@ -69,12 +70,18 @@ export default function Login() {
     if (!forgotEmail) { toast.error("يرجى إدخال بريدك الإلكتروني"); return; }
     setForgotLoading(true);
     try {
-      await sendPasswordResetEmail(auth, forgotEmail);
-      toast.success("تم إرسال رابط إعادة تعيين كلمة المرور إلى بريدك الإلكتروني");
+      // ✅ إصلاح: كانت تستخدم sendPasswordResetEmail المباشرة من Firebase Auth
+      // (قالب Firebase الافتراضي بالرابط الخام). الآن تستدعي دالة سحابية
+      // تولّد نفس الرابط وترسله بقالبنا الموحّد عبر Gmail (زر واضح بدل رابط).
+      // ✅ لا نكشف للمستخدم إن كان البريد مسجَّلاً بحساب من عدمه — الرسالة
+      // نفسها دائماً (الدالة السحابية تتصرف بنفس المنطق من جهتها).
+      const sendReset = httpsCallable(functions, "sendPasswordResetEmailCustom");
+      await sendReset({ email: forgotEmail });
+      toast.success("إذا كان البريد مسجّلاً لدينا، ستصلك رسالة إعادة تعيين كلمة المرور خلال لحظات");
       setShowForgot(false);
       setForgotEmail("");
     } catch (err: any) {
-      toast.error("لم يتم العثور على حساب بهذا البريد الإلكتروني");
+      toast.error("تعذّر إرسال الطلب، تحقق من اتصالك وحاول مرة أخرى");
     } finally {
       setForgotLoading(false);
     }

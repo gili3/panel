@@ -7,6 +7,7 @@ import {
   persistentMultipleTabManager,
 } from "firebase/firestore";
 import { getStorage } from "firebase/storage";
+import { getFunctions } from "firebase/functions";
 
 /**
  * ELEVEN STORE — تهيئة Firebase الأساسية (Auth / Firestore / Storage / App Check)
@@ -62,6 +63,10 @@ export const db = initializeFirestore(firebaseApp, {
   localCache: persistentLocalCache({ tabManager: persistentMultipleTabManager() }),
 });
 export const storage = getStorage(firebaseApp);
+// ✅ جديد: يستخدمه Login.tsx لاستدعاء sendPasswordResetEmailCustom (رسالة
+// استعادة كلمة المرور بقالبنا الموحّد عبر Gmail) بدل sendPasswordResetEmail
+// المباشرة من Firebase Auth SDK (التي ترسل بقالب Firebase الافتراضي).
+export const functions = getFunctions(firebaseApp);
 
 // App Check (reCAPTCHA v3) — يُفعَّل فقط إن وُجد مفتاح حقيقي بمتغيرات البيئة.
 // بدونه، يُتخطّى بأمان تماماً طالما "Enforce" غير مفعَّل بعد بـFirebase Console.

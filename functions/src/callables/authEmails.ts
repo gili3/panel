@@ -22,9 +22,15 @@ import {
  * التلقائي له؛ نرسله نحن عبر sendMail() بقالبنا الموحّد (زر واضح + تصميم
  * العلامة). العميل (تطبيق/موقع) يستدعي هاتين الدالتين بدل
  * user.sendEmailVerification() / sendPasswordResetEmail() المباشرتين.
+ *
+ * ✅ إصلاح: أُزيل CONTINUE_URL (كان يشير لدومين eleven-sd.com) نهائياً.
+ * كان يُستخدم كـ actionCodeSettings.url لزر "متابعة" الذي يظهر أسفل صفحة
+ * التأكيد المُستضافة من فايربيز نفسها بعد نجاح العملية — وبما أن الموقع
+ * أُوقف وأصبح الدومين يفتح لوحة التحكم الداخلية، كان هذا الزر يوصّل أي
+ * عميل عادي (بعد تأكيد بريده أو تغيير كلمة مروره) لصفحة تسجيل دخول
+ * الأدمن بالغلط. حذف actionCodeSettings بالكامل من الاستدعاءين أدناه
+ * يجعل فايربيز تعرض صفحة "تم التأكيد/تم التغيير" فقط بدون أي زر متابعة.
  */
-
-const CONTINUE_URL = (process.env.SITE_BASE_URL || "https://eleven-sd.com").replace(/\/$/, "");
 
 // ─── تأكيد البريد الإلكتروني ────────────────────────────────────────────
 export const sendVerificationEmail = functionsV1.https.onCall(async (_data, context) => {
@@ -42,10 +48,8 @@ export const sendVerificationEmail = functionsV1.https.onCall(async (_data, cont
     return { alreadyVerified: true };
   }
 
-  const link = await admin.auth().generateEmailVerificationLink(user.email, {
-    url: CONTINUE_URL,
-  });
-  const { subject, html } = verifyEmailTemplate(link);
+  const link = await admin.auth().generateEmailVerificationLink(user.email);
+  const { subject, html } = verifyEmailTemplate(link, user.displayName || undefined);
   await sendMail({ to: user.email, subject, html });
   return { sent: true };
 });
@@ -58,7 +62,7 @@ export const sendPasswordResetEmailCustom = functionsV1.https.onCall(async (data
   }
 
   try {
-    const link = await admin.auth().generatePasswordResetLink(email, { url: CONTINUE_URL });
+    const link = await admin.auth().generatePasswordResetLink(email);
     const { subject, html } = resetPasswordTemplate(link);
     await sendMail({ to: email, subject, html });
   } catch (err: unknown) {

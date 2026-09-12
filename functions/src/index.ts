@@ -8,3 +8,9 @@ export {
   requestAccountDeletionOtp,
   confirmAccountDeletion,
 } from "./callables/authEmails";
+export {
+  sendEmailVerificationOtp,
+  confirmEmailVerificationOtp,
+  sendPasswordResetOtp,
+  confirmPasswordResetOtp,
+} from "./callables/otpAuth";

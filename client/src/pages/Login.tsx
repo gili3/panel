@@ -21,6 +21,9 @@ export default function Login() {
   const [showForgot, setShowForgot] = useState(false);
   const [forgotEmail, setForgotEmail] = useState("");
   const [forgotLoading, setForgotLoading] = useState(false);
+  const [otpSent, setOtpSent] = useState(false);
+  const [otp, setOtp] = useState("");
+  const [newPassword, setNewPassword] = useState("");
 
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -65,23 +68,46 @@ export default function Login() {
     }
   };
 
-  const handleForgotPassword = async (e: React.FormEvent) => {
+  const handleRequestOtp = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!forgotEmail) { toast.error("يرجى إدخال بريدك الإلكتروني"); return; }
     setForgotLoading(true);
     try {
-      // ✅ إصلاح: كانت تستخدم sendPasswordResetEmail المباشرة من Firebase Auth
-      // (قالب Firebase الافتراضي بالرابط الخام). الآن تستدعي دالة سحابية
-      // تولّد نفس الرابط وترسله بقالبنا الموحّد عبر Gmail (زر واضح بدل رابط).
-      // ✅ لا نكشف للمستخدم إن كان البريد مسجَّلاً بحساب من عدمه — الرسالة
+      // ✅ إصلاح: كانت تستخدم sendPasswordResetEmailCustom (رابط). الآن
+      // تستخدم رمز OTP من 6 أرقام — نفس آلية التطبيق تماماً.
+      // لا نكشف للمستخدم إن كان البريد مسجَّلاً بحساب من عدمه — الرسالة
       // نفسها دائماً (الدالة السحابية تتصرف بنفس المنطق من جهتها).
-      const sendReset = httpsCallable(functions, "sendPasswordResetEmailCustom");
+      const sendReset = httpsCallable(functions, "sendPasswordResetOtp");
       await sendReset({ email: forgotEmail });
-      toast.success("إذا كان البريد مسجّلاً لدينا، ستصلك رسالة إعادة تعيين كلمة المرور خلال لحظات");
-      setShowForgot(false);
-      setForgotEmail("");
+      toast.success("إذا كان البريد مسجّلاً لدينا، ستصلك رسالة فيها رمز من 6 أرقام خلال لحظات");
+      setOtpSent(true);
     } catch (err: any) {
       toast.error("تعذّر إرسال الطلب، تحقق من اتصالك وحاول مرة أخرى");
+    } finally {
+      setForgotLoading(false);
+    }
+  };
+
+  const handleConfirmOtp = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!otp || !newPassword) { toast.error("يرجى إدخال الرمز وكلمة المرور الجديدة"); return; }
+    if (newPassword.length < 8) { toast.error("كلمة المرور يجب أن تكون 8 أحرف على الأقل"); return; }
+    setForgotLoading(true);
+    try {
+      const confirmReset = httpsCallable(functions, "confirmPasswordResetOtp");
+      await confirmReset({ email: forgotEmail, otp, newPassword });
+      toast.success("تم تغيير كلمة المرور بنجاح، يمكنك تسجيل الدخول الآن");
+      setShowForgot(false);
+      setOtpSent(false);
+      setForgotEmail("");
+      setOtp("");
+      setNewPassword("");
+    } catch (err: any) {
+      const msg = err.code === "functions/invalid-argument" ? "الرمز غير صحيح"
+        : err.code === "functions/deadline-exceeded" ? "انتهت صلاحية الرمز، يرجى طلب رمز جديد"
+        : err.code === "functions/resource-exhausted" ? "عدد محاولات كبير جداً، حاول لاحقاً"
+        : "تعذّر إتمام العملية، تحقق من الرمز وحاول مرة أخرى";
+      toast.error(msg);
     } finally {
       setForgotLoading(false);
     }
@@ -104,40 +130,87 @@ export default function Login() {
                     استعادة كلمة المرور
                   </h1>
                   <p className="text-sm text-muted-foreground">
-                    سنرسل رابط الاسترداد إلى بريدك الإلكتروني
+                    {otpSent ? "أدخل الرمز المكوّن من 6 أرقام وكلمة المرور الجديدة" : "سنرسل رمز تأكيد إلى بريدك الإلكتروني"}
                   </p>
                 </div>
-                <form onSubmit={handleForgotPassword} className="space-y-5">
-                  <div className="space-y-2">
-                    <label className="text-sm font-semibold text-foreground">البريد الإلكتروني</label>
-                    <div className="relative">
-                      <Mail className="absolute right-3 top-1/2 -translate-y-1/2 w-5 h-5 text-muted-foreground" />
+                {!otpSent ? (
+                  <form onSubmit={handleRequestOtp} className="space-y-5">
+                    <div className="space-y-2">
+                      <label className="text-sm font-semibold text-foreground">البريد الإلكتروني</label>
+                      <div className="relative">
+                        <Mail className="absolute right-3 top-1/2 -translate-y-1/2 w-5 h-5 text-muted-foreground" />
+                        <Input
+                          type="email"
+                          placeholder="your@email.com"
+                          value={forgotEmail}
+                          onChange={(e) => setForgotEmail(e.target.value)}
+                          className="pr-10 h-11 border-border bg-secondary/30 focus:ring-2 focus:ring-primary rounded-lg"
+                          required
+                        />
+                      </div>
+                    </div>
+                    <Button
+                      type="submit"
+                      className="w-full h-11 bg-primary text-primary-foreground hover:bg-primary/90 font-bold text-base rounded-lg"
+                      disabled={forgotLoading}
+                    >
+                      {forgotLoading ? <><Loader2 className="w-4 h-4 ml-2 animate-spin" />جاري الإرسال...</> : "إرسال رمز التأكيد"}
+                    </Button>
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      className="w-full"
+                      onClick={() => setShowForgot(false)}
+                    >
+                      العودة لتسجيل الدخول
+                    </Button>
+                  </form>
+                ) : (
+                  <form onSubmit={handleConfirmOtp} className="space-y-5">
+                    <div className="space-y-2">
+                      <label className="text-sm font-semibold text-foreground">رمز التأكيد</label>
                       <Input
-                        type="email"
-                        placeholder="your@email.com"
-                        value={forgotEmail}
-                        onChange={(e) => setForgotEmail(e.target.value)}
-                        className="pr-10 h-11 border-border bg-secondary/30 focus:ring-2 focus:ring-primary rounded-lg"
+                        type="text"
+                        inputMode="numeric"
+                        placeholder="000000"
+                        value={otp}
+                        onChange={(e) => setOtp(e.target.value)}
+                        className="h-11 border-border bg-secondary/30 focus:ring-2 focus:ring-primary rounded-lg text-center tracking-[0.5em]"
+                        maxLength={6}
                         required
                       />
                     </div>
-                  </div>
-                  <Button
-                    type="submit"
-                    className="w-full h-11 bg-primary text-primary-foreground hover:bg-primary/90 font-bold text-base rounded-lg"
-                    disabled={forgotLoading}
-                  >
-                    {forgotLoading ? <><Loader2 className="w-4 h-4 ml-2 animate-spin" />جاري الإرسال...</> : "إرسال رابط الاسترداد"}
-                  </Button>
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    className="w-full"
-                    onClick={() => setShowForgot(false)}
-                  >
-                    العودة لتسجيل الدخول
-                  </Button>
-                </form>
+                    <div className="space-y-2">
+                      <label className="text-sm font-semibold text-foreground">كلمة المرور الجديدة</label>
+                      <div className="relative">
+                        <Lock className="absolute right-3 top-1/2 -translate-y-1/2 w-5 h-5 text-muted-foreground" />
+                        <Input
+                          type="password"
+                          placeholder="••••••••"
+                          value={newPassword}
+                          onChange={(e) => setNewPassword(e.target.value)}
+                          className="pr-10 h-11 border-border bg-secondary/30 focus:ring-2 focus:ring-primary rounded-lg"
+                          required
+                        />
+                      </div>
+                    </div>
+                    <Button
+                      type="submit"
+                      className="w-full h-11 bg-primary text-primary-foreground hover:bg-primary/90 font-bold text-base rounded-lg"
+                      disabled={forgotLoading}
+                    >
+                      {forgotLoading ? <><Loader2 className="w-4 h-4 ml-2 animate-spin" />جاري التأكيد...</> : "تأكيد وتغيير كلمة المرور"}
+                    </Button>
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      className="w-full"
+                      onClick={() => { setOtpSent(false); setOtp(""); setNewPassword(""); }}
+                    >
+                      لم يصلك الرمز؟ إعادة الإرسال
+                    </Button>
+                  </form>
+                )}
               </CardContent>
             </Card>
           </div>

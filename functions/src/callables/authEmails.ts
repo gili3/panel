@@ -3,53 +3,15 @@ import * as admin from "firebase-admin";
 import { db } from "../lib/admin";
 import { sendMail } from "../lib/mailer";
 import { generateOtp, hashOtp } from "../lib/otp";
-import { resetPasswordTemplate, deletionOtpTemplate } from "../lib/emailTemplates";
+import { deletionOtpTemplate } from "../lib/emailTemplates";
 
 /**
- * ELEVEN STORE — دوال البريد المخصّصة (Callable Functions)
+ * ELEVEN STORE — حذف الحساب برمز تأكيد (OTP)
  * ═══════════════════════════════════════════════════════════════════════
- * لماذا نولّد روابط تأكيد الحساب/استعادة كلمة المرور يدوياً بدل الاعتماد
- * على إرسال Firebase Auth التلقائي؟
- * ───────────────────────────────────────────────────────────────────────
- * قوالب Firebase الافتراضية تُظهر الرابط الخام مباشرة بلا أي تصميم موحّد
- * مع بقية رسائل المتجر. admin.auth().generateEmailVerificationLink() /
- * generatePasswordResetLink() تُنشئ نفس الرابط الفعلي (نفس آلية Firebase
- * الأمنية تماماً — صلاحية محدودة، رمز لمرة واحدة) لكن دون إرسال Firebase
- * التلقائي له؛ نرسله نحن عبر sendMail() بقالبنا الموحّد (زر واضح + تصميم
- * العلامة). العميل (تطبيق/موقع) يستدعي هاتين الدالتين بدل
- * user.sendEmailVerification() / sendPasswordResetEmail() المباشرتين.
- *
- * ✅ إصلاح: أُزيل CONTINUE_URL (كان يشير لدومين eleven-sd.com) نهائياً.
- * كان يُستخدم كـ actionCodeSettings.url لزر "متابعة" الذي يظهر أسفل صفحة
- * التأكيد المُستضافة من فايربيز نفسها بعد نجاح العملية — وبما أن الموقع
- * أُوقف وأصبح الدومين يفتح لوحة التحكم الداخلية، كان هذا الزر يوصّل أي
- * عميل عادي (بعد تأكيد بريده أو تغيير كلمة مروره) لصفحة تسجيل دخول
- * الأدمن بالغلط. حذف actionCodeSettings بالكامل من الاستدعاءين أدناه
- * يجعل فايربيز تعرض صفحة "تم التأكيد/تم التغيير" فقط بدون أي زر متابعة.
+ * تأكيد البريد واستعادة كلمة المرور صارا بالكامل عبر رمز OTP (راجع
+ * otpAuth.ts) — لا يوجد أي مسار روابط متبقٍّ بالمشروع بعد حذف
+ * sendVerificationEmail و sendPasswordResetEmailCustom.
  */
-
-// ─── استعادة كلمة المرور ────────────────────────────────────────────────
-export const sendPasswordResetEmailCustom = functionsV1.https.onCall(async (data) => {
-  const email = typeof data?.email === "string" ? data.email.trim() : "";
-  if (!email) {
-    throw new functionsV1.https.HttpsError("invalid-argument", "البريد الإلكتروني مطلوب");
-  }
-
-  try {
-    const link = await admin.auth().generatePasswordResetLink(email);
-    const { subject, html } = resetPasswordTemplate(link);
-    await sendMail({ to: email, subject, html });
-  } catch (err: unknown) {
-    // ✅ لا نكشف للمستخدم إن كان البريد مسجَّلاً بحساب من عدمه (منع
-    // user enumeration) — الاستجابة نفسها دائماً بصرف النظر عن النتيجة
-    // الفعلية. نسجّل فقط الأخطاء غير المتوقعة (ليس "بريد غير موجود").
-    const code = (err as { code?: string })?.code;
-    if (code !== "auth/user-not-found") {
-      console.error("[sendPasswordResetEmailCustom] فشل غير متوقع:", err);
-    }
-  }
-  return { sent: true };
-});
 
 // ─── حذف الحساب برمز تأكيد (OTP) ────────────────────────────────────────
 const OTP_TTL_MS = 10 * 60 * 1000; // 10 دقائق

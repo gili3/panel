@@ -63,9 +63,9 @@ export const db = initializeFirestore(firebaseApp, {
   localCache: persistentLocalCache({ tabManager: persistentMultipleTabManager() }),
 });
 export const storage = getStorage(firebaseApp);
-// ✅ جديد: يستخدمه Login.tsx لاستدعاء sendPasswordResetEmailCustom (رسالة
-// استعادة كلمة المرور بقالبنا الموحّد عبر Gmail) بدل sendPasswordResetEmail
-// المباشرة من Firebase Auth SDK (التي ترسل بقالب Firebase الافتراضي).
+// ✅ يستخدمه Login.tsx لاستدعاء sendPasswordResetOtp/confirmPasswordResetOtp
+// (رمز OTP بقالبنا الموحّد عبر Gmail) بدل sendPasswordResetEmail المباشرة
+// من Firebase Auth SDK (التي ترسل رابطاً بقالب Firebase الافتراضي).
 export const functions = getFunctions(firebaseApp);
 
 // App Check (reCAPTCHA v3) — يُفعَّل فقط إن وُجد مفتاح حقيقي بمتغيرات البيئة.

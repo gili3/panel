@@ -5,7 +5,7 @@ import { db } from "../lib/admin";
 import { sendMail } from "../lib/mailer";
 import { generateOtp, hashOtp } from "../lib/otp";
 import { normalizeEmail } from "../lib/email";
-import { verifyEmailOtpTemplate, resetPasswordOtpTemplate } from "../lib/emailTemplates";
+import { verifyEmailOtpTemplate, resetPasswordOtpTemplate, passwordChangedTemplate } from "../lib/emailTemplates";
 import { checkRateLimitFirestore } from "../lib/rateLimit";
 
 /**
@@ -243,5 +243,15 @@ export const confirmPasswordResetOtp = functionsV1.https.onCall(async (data) => 
   // مختلف بمرحلة سابقة (الفحص الحقيقي الوحيد حدث بالفعل أعلاه بالرمز).
   const user = await admin.auth().getUserByEmail(email);
   await admin.auth().updateUser(user.uid, { password: newPassword });
+
+  // ✅ إشعار أمني — لا نوقف نجاح العملية لو فشل الإرسال، فكلمة المرور
+  // اتغيّرت فعلاً بالفعل (نفس فلسفة onUserCreated مع رسالة الترحيب)
+  try {
+    const { subject, html } = passwordChangedTemplate();
+    await sendMail({ to: email, subject, html });
+  } catch (err) {
+    console.error(`[confirmPasswordResetOtp] فشل إرسال إشعار تغيير كلمة المرور لـ ${email}:`, err);
+  }
+
   return { reset: true };
 });

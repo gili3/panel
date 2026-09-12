@@ -24,7 +24,7 @@ import { welcomeEmailTemplate } from "../lib/emailTemplates";
  * الحل: لا نرسل الترحيب هنا إلا للحسابات المؤكَّدة بالفعل عند الإنشاء
  * (Google وأي مزوّد آخر مُتحقَّق منه مسبقاً). حسابات البريد/كلمة المرور
  * غير المؤكَّدة تستلم رسالة واحدة فقط الآن (تأكيد + ترحيب مدمَج في نفس
- * القالب، انظر verifyEmailTemplate) — رسالة واحدة بدل اثنتين، فلا يوجد
+ * القالب، انظر verifyEmailOtpTemplate) — رسالة واحدة بدل اثنتين، فلا يوجد
  * سباق إرسال من الأساس.
  */
 export const onUserCreated = functionsV1.auth.user().onCreate(async (user) => {

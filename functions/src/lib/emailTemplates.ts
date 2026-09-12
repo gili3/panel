@@ -110,37 +110,6 @@ export function welcomeEmailTemplate(name: string): EmailContent {
   };
 }
 
-export function verifyEmailTemplate(link: string, name?: string): EmailContent {
-  const greeting = name?.trim() ? `أهلاً ${name.trim()} 👋` : "أهلاً بك 👋";
-  return {
-    subject: "أهلاً بك في Eleven Store — أكّد بريدك 🎉",
-    html: renderEmailLayout({
-      title: greeting,
-      bodyHtml:
-        "<p>يسعدنا انضمامك إلى Eleven Store. خطوة واحدة تفصلك عن تفعيل حسابك: اضغط الزر أدناه لتأكيد بريدك الإلكتروني.</p>" +
-        "<p>إذا لم تُنشئ هذا الحساب، يمكنك تجاهل هذه الرسالة بأمان — لن يتم تفعيل شيء بدون ضغط الزر.</p>",
-      buttonText: "تأكيد الحساب",
-      buttonUrl: link,
-      footerNote: "هذا الرابط صالح لفترة محدودة لأسباب أمنية.",
-    }),
-  };
-}
-
-export function resetPasswordTemplate(link: string): EmailContent {
-  return {
-    subject: "إعادة تعيين كلمة المرور — Eleven Store",
-    html: renderEmailLayout({
-      title: "إعادة تعيين كلمة المرور",
-      bodyHtml:
-        "<p>وصلنا طلب لإعادة تعيين كلمة مرور حسابك. اضغط الزر أدناه لاختيار كلمة مرور جديدة.</p>" +
-        "<p>إذا لم تطلب ذلك، تجاهل هذه الرسالة ولن يتغيّر شيء في حسابك.</p>",
-      buttonText: "إعادة تعيين كلمة المرور",
-      buttonUrl: link,
-      footerNote: "هذا الرابط صالح لفترة محدودة لأسباب أمنية.",
-    }),
-  };
-}
-
 export function verifyEmailOtpTemplate(otp: string, name?: string): EmailContent {
   const greeting = name?.trim() ? `أهلاً ${name.trim()} 👋` : "أهلاً بك 👋";
   return {
@@ -180,6 +149,18 @@ export function deletionOtpTemplate(otp: string): EmailContent {
         `<p style="text-align:center; font-size:32px; font-weight:700; letter-spacing:10px; color:#0f172a; margin:24px 0;">${otp}</p>` +
         "<p>إذا لم تطلب حذف حسابك، تجاهل هذه الرسالة فوراً ولا تشارك هذا الرمز مع أي أحد.</p>",
       footerNote: "الرمز صالح لمدة 10 دقائق فقط.",
+    }),
+  };
+}
+
+export function passwordChangedTemplate(): EmailContent {
+  return {
+    subject: "تم تغيير كلمة المرور — Eleven Store",
+    html: renderEmailLayout({
+      title: "تم تغيير كلمة المرور بنجاح",
+      bodyHtml:
+        "<p>نؤكّد أنه تم تغيير كلمة مرور حسابك بنجاح للتو.</p>" +
+        "<p>إذا لم تكن أنت من قام بهذا التغيير، تواصل معنا فوراً عبر بريد الدعم لتأمين حسابك.</p>",
     }),
   };
 }

@@ -1,0 +1,42 @@
+name: نشر تلقائي على Firebase
+
+# يشتغل تلقائيًا كل ما يوصل push على main، فقط لو تغيّر شيء يخص
+# الـfunctions أو قواعد Firestore/Storage — أي تعديل بالـclient (اللوحة نفسها)
+# ما يشغّل هذا الملف لأنه بينشر عبر استضافة الويب المعتادة (Vercel/غيره)، مو هنا.
+on:
+  push:
+    branches: [main]
+    paths:
+      - "functions/**"
+      - "firestore.rules"
+      - "firestore.indexes.json"
+      - "storage.rules"
+      - ".github/workflows/deploy-functions.yml"
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: تثبيت باكجات functions وبناؤها
+        working-directory: functions
+        run: |
+          npm install
+          npm run build
+
+      - name: تسجيل الدخول لـ Google Cloud
+        uses: google-github-actions/auth@v2
+        with:
+          credentials_json: "${{ secrets.FIREBASE_SERVICE_ACCOUNT }}"
+
+      - name: نشر functions + قواعد Firestore/Storage
+        run: |
+          npx firebase-tools@latest deploy \
+            --only functions,firestore:rules,storage \
+            --project "${{ secrets.FIREBASE_PROJECT_ID }}" \
+            --non-interactive

@@ -3,11 +3,7 @@ import * as admin from "firebase-admin";
 import { db } from "../lib/admin";
 import { sendMail } from "../lib/mailer";
 import { generateOtp, hashOtp } from "../lib/otp";
-import {
-  verifyEmailTemplate,
-  resetPasswordTemplate,
-  deletionOtpTemplate,
-} from "../lib/emailTemplates";
+import { resetPasswordTemplate, deletionOtpTemplate } from "../lib/emailTemplates";
 
 /**
  * ELEVEN STORE — دوال البريد المخصّصة (Callable Functions)
@@ -31,28 +27,6 @@ import {
  * الأدمن بالغلط. حذف actionCodeSettings بالكامل من الاستدعاءين أدناه
  * يجعل فايربيز تعرض صفحة "تم التأكيد/تم التغيير" فقط بدون أي زر متابعة.
  */
-
-// ─── تأكيد البريد الإلكتروني ────────────────────────────────────────────
-export const sendVerificationEmail = functionsV1.https.onCall(async (_data, context) => {
-  if (!context.auth) {
-    throw new functionsV1.https.HttpsError("unauthenticated", "يجب تسجيل الدخول أولاً");
-  }
-  const user = await admin.auth().getUser(context.auth.uid);
-  if (!user.email) {
-    throw new functionsV1.https.HttpsError(
-      "failed-precondition",
-      "لا يوجد بريد إلكتروني مرتبط بهذا الحساب"
-    );
-  }
-  if (user.emailVerified) {
-    return { alreadyVerified: true };
-  }
-
-  const link = await admin.auth().generateEmailVerificationLink(user.email);
-  const { subject, html } = verifyEmailTemplate(link, user.displayName || undefined);
-  await sendMail({ to: user.email, subject, html });
-  return { sent: true };
-});
 
 // ─── استعادة كلمة المرور ────────────────────────────────────────────────
 export const sendPasswordResetEmailCustom = functionsV1.https.onCall(async (data) => {

@@ -3,7 +3,6 @@ export { onNotificationWrite } from "./triggers/notificationCounterTrigger";
 export { onUserDeleted } from "./triggers/userDeletionTrigger";
 export { onUserCreated } from "./triggers/userCreatedTrigger";
 export {
-  sendVerificationEmail,
   sendPasswordResetEmailCustom,
   requestAccountDeletionOtp,
   confirmAccountDeletion,

@@ -1,0 +1,33 @@
+name: حذف دالة يدويًا (استخدام لمرة واحدة عند الحاجة)
+
+# يشتغل بس لما تدوس زر "Run workflow" يدويًا من تبويب Actions — ما يشتغل
+# تلقائيًا أبدًا. استخدمناه هنا لحذف دالة "app" القديمة المتبقية من إعداد
+# سابق على Firebase، والتي كانت توقف نشر functions لأنها غير موجودة بالكود
+# الحالي ولا يقدر firebase deploy --non-interactive يحذفها لوحده.
+on:
+  workflow_dispatch:
+    inputs:
+      function_name:
+        description: "اسم الدالة المطلوب حذفها"
+        required: true
+        default: "app"
+      region:
+        description: "المنطقة (region)"
+        required: true
+        default: "us-central1"
+
+jobs:
+  delete:
+    runs-on: ubuntu-latest
+    steps:
+      - name: تسجيل الدخول لـ Google Cloud
+        uses: google-github-actions/auth@v2
+        with:
+          credentials_json: "${{ secrets.FIREBASE_SERVICE_ACCOUNT }}"
+
+      - name: حذف الدالة
+        run: |
+          npx firebase-tools@latest functions:delete "${{ github.event.inputs.function_name }}" \
+            --region "${{ github.event.inputs.region }}" \
+            --project "${{ secrets.FIREBASE_PROJECT_ID }}" \
+            --force

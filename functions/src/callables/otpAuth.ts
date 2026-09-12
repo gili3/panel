@@ -6,6 +6,7 @@ import { sendMail } from "../lib/mailer";
 import { generateOtp, hashOtp } from "../lib/otp";
 import { normalizeEmail } from "../lib/email";
 import { verifyEmailOtpTemplate, resetPasswordOtpTemplate } from "../lib/emailTemplates";
+import { checkRateLimitFirestore } from "../lib/rateLimit";
 
 /**
  * ELEVEN STORE — تأكيد البريد واستعادة كلمة المرور عبر رمز (OTP)
@@ -122,6 +123,14 @@ export const sendEmailVerificationOtp = functionsV1.https.onCall(async (data, co
     }
   }
 
+  // ✅ حماية من إغراق البريد بالرسائل (email bombing) — راجع lib/rateLimit.ts
+  if (!(await checkRateLimitFirestore(`send-verify-otp:${uid}`, 5, 15 * 60 * 1000))) {
+    throw new functionsV1.https.HttpsError(
+      "resource-exhausted",
+      "طلبات كثيرة جداً، يرجى المحاولة لاحقاً"
+    );
+  }
+
   const otp = generateOtp();
   await verifyEmailOtpRef(uid).set({
     hash: hashOtp(otp),
@@ -155,6 +164,14 @@ export const confirmEmailVerificationOtp = functionsV1.https.onCall(async (data)
     throw new functionsV1.https.HttpsError("invalid-argument", "رمز التأكيد غير صحيح");
   }
 
+  // ✅ حد إضافي (دفاع بعمق) فوق حد المحاولات المخزّن مع الرمز نفسه
+  if (!(await checkRateLimitFirestore(`confirm-verify-otp:${uid}`, 10, 15 * 60 * 1000))) {
+    throw new functionsV1.https.HttpsError(
+      "resource-exhausted",
+      "طلبات كثيرة جداً، يرجى المحاولة لاحقاً"
+    );
+  }
+
   await verifyAndConsumeOtp(verifyEmailOtpRef(uid), otp);
   await admin.auth().updateUser(uid, { emailVerified: true });
   return { verified: true };
@@ -171,6 +188,12 @@ export const sendPasswordResetOtp = functionsV1.https.onCall(async (data) => {
   const email = normalizeEmail(rawEmail);
   if (!email) {
     throw new functionsV1.https.HttpsError("invalid-argument", "البريد الإلكتروني مطلوب");
+  }
+
+  // ✅ حماية من إغراق البريد بالرسائل — نطبّقها قبل معرفة إن كان الحساب
+  // موجوداً أصلاً حتى لا نكشف بوجوده من زمن استجابة مختلف
+  if (!(await checkRateLimitFirestore(`send-reset-otp:${email}`, 5, 15 * 60 * 1000))) {
+    return { sent: true };
   }
 
   try {
@@ -204,6 +227,13 @@ export const confirmPasswordResetOtp = functionsV1.https.onCall(async (data) => 
   }
   if (newPassword.length < 8) {
     throw new functionsV1.https.HttpsError("invalid-argument", "كلمة المرور يجب أن تكون 8 أحرف على الأقل");
+  }
+
+  if (!(await checkRateLimitFirestore(`confirm-reset-otp:${email}`, 10, 15 * 60 * 1000))) {
+    throw new functionsV1.https.HttpsError(
+      "resource-exhausted",
+      "طلبات كثيرة جداً، يرجى المحاولة لاحقاً"
+    );
   }
 
   await verifyAndConsumeOtp(passwordResetOtpRef(email), otp);

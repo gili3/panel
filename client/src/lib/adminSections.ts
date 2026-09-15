@@ -14,7 +14,10 @@ export type AdminSection = {
 };
 
 export const ADMIN_SECTIONS: AdminSection[] = [
-  { key: "overview", path: "/", label: "نظرة عامة", icon: BarChart3, permission: null },
+  // ✅ إصلاح: كانت "نظرة عامة" (الإحصائيات) permission: null، أي ظاهرة لأي
+  // أدمن بصرف النظر عن صلاحياته الفعلية — بعكس كل قسم آخر (الطلبات،
+  // البانرات، المستخدمين...) المحمي بصلاحية مخصصة. الآن تتبع نفس النمط.
+  { key: "overview", path: "/", label: "نظرة عامة", icon: BarChart3, permission: "statistics" },
   { key: "products", path: "/products", label: "المنتجات", icon: Package, permission: "products" },
   { key: "orders", path: "/orders", label: "الطلبات", icon: ShoppingBag, permission: "orders" },
   { key: "categories", path: "/categories", label: "التصنيفات", icon: Tag, permission: "categories" },

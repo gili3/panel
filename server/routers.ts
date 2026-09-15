@@ -4,6 +4,7 @@ import { firestoreRouter } from "./firestore-router";
 import { adminUsersRouter } from "./admin-users-router";
 import { adminNotificationsRouter } from "./admin-notifications-router";
 import { adminContactRouter } from "./admin-contact-router";
+import { adminAlertsRouter } from "./admin-alerts-router";
 
 export const appRouter = router({
   system: systemRouter,
@@ -27,6 +28,7 @@ export const appRouter = router({
   adminUsers: adminUsersRouter,
   adminNotifications: adminNotificationsRouter,
   adminContact: adminContactRouter,
+  adminAlerts: adminAlertsRouter,
 });
 
 export type AppRouter = typeof appRouter;

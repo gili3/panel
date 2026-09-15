@@ -7,7 +7,8 @@ import { toast } from "sonner";
 import ErrorBoundary from "./components/ErrorBoundary";
 import { ThemeProvider } from "./contexts/ThemeContext";
 import { LanguageProvider } from "./contexts/LanguageContext";
-import { AuthProvider } from "./_core/hooks/useAuth";
+import { AuthProvider, useAuth } from "./_core/hooks/useAuth";
+import { registerServiceWorkerOnly, listenForegroundPush } from "./lib/push";
 import AdminDashboard from "./pages/AdminDashboard";
 import Login from "./pages/Login";
 import Users from "./pages/Users";
@@ -27,6 +28,29 @@ function Router() {
       <Route component={NotFound} />
     </Switch>
   );
+}
+
+// ✅ جديد: يسجّل service worker فقط عند تحميل اللوحة (بلا طلب إذن — ذلك
+// يبقى حصراً لزر "تفعيل" الصريح بـNotificationBell.tsx)، ثم يستمع لأي Push
+// يصل والموقع مفتوح بالمقدمة تحديداً (onMessage لا onBackgroundMessage —
+// الأخير من اختصاص service worker وحده). بدون هذا: أدمن فاتح تبويب اللوحة
+// فعلاً لن يرى أي شيء لحدث وصل الآن سوى بعد الـpolling الدوري لـ20 ثانية
+// بـNotificationBell.tsx، رغم وصول الـPush فعلياً للمتصفح في نفس اللحظة.
+function PushNotificationsSetup() {
+  const { isAuthenticated } = useAuth();
+
+  useEffect(() => {
+    registerServiceWorkerOnly();
+  }, []);
+
+  useEffect(() => {
+    if (!isAuthenticated) return;
+    return listenForegroundPush((payload) => {
+      toast(payload.title, { description: payload.body });
+    });
+  }, [isAuthenticated]);
+
+  return null;
 }
 
 // مؤشر حالة الاتصال بالشبكة فقط (بلا أي اعتماد على صفحات الموقع المحذوفة).
@@ -63,6 +87,7 @@ function App() {
           <Toaster />
           <OfflineIndicator />
           <AuthProvider>
+            <PushNotificationsSetup />
             <Router />
           </AuthProvider>
         </TooltipProvider>

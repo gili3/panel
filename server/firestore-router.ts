@@ -1357,7 +1357,13 @@ export const firestoreRouter = router({
   // عند كل طلب (onOrderCreated/onOrderStatusChanged) بدل إعادة حسابه بالكامل
   // من الصفر بكل فتح للوحة التحكم؛ لم يُطبَّق هنا تفادياً لتغيير معماري أكبر
   // بدون طلب صريح لذلك.
-  getAdminStats: adminProcedure
+  // ✅ إصلاح صلاحيات حقيقي (وليس مجرد إخفاء رابط بالواجهة): كانت هذه النقطة
+  // محمية بـadminProcedure فقط (أي أدمن، بصرف النظر عن صلاحياته)، فكان أي
+  // أدمن — حتى المخصص لقسم واحد فقط كالبانرات — يقدر يستدعيها مباشرة ويرى
+  // كامل إحصائيات المتجر (الإيرادات، الطلبات، تفاصيل المبيعات) رغم أن رابط
+  // "نظرة عامة" كان مخفياً عنه بالسايدبار. الآن محمية بصلاحية "statistics"
+  // تحديداً، متسقة مع باقي الأقسام.
+  getAdminStats: adminPermission("statistics")
     .query(async ({ ctx }) => {
 
       const settingsDocPromise = adminDb.collection("settings").doc("store").get();

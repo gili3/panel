@@ -3,6 +3,7 @@ import { useLocation } from "wouter";
 import { useAuth } from "@/_core/hooks/useAuth";
 import { Button } from "@/components/ui/button";
 import { LogOut, ShieldCheck } from "lucide-react";
+import NotificationBell from "@/components/NotificationBell";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -42,6 +43,7 @@ export default function Layout({ children }: LayoutProps) {
               <span>لوحة تحكم Eleven</span>
             </div>
             <div className="flex items-center gap-3">
+              {user.role === "admin" && <NotificationBell />}
               {user.email && (
                 <span className="hidden sm:inline text-sm text-muted-foreground">{user.email}</span>
               )}

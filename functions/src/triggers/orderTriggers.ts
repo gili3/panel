@@ -1,5 +1,6 @@
 import { onDocumentCreated, onDocumentUpdated } from "firebase-functions/v2/firestore";
 import { notify } from "../lib/notifications";
+import { createAdminAlert } from "../lib/adminAlerts";
 import { db } from "../lib/admin";
 
 /**
@@ -128,6 +129,28 @@ export const onOrderCreated = onDocumentCreated("orders/{orderId}", async (event
       })
     );
   }
+
+  // ✅ جديد: تنبيه جرس لوحة التحكم (منفصل عن قناة العميل أعلاه — راجع الشرح
+  // بأعلى adminAlerts.ts). مستند واحد فقط لكل طلب، تُحدَّد رؤيته بصلاحية
+  // "orders" وقت القراءة لا وقت الإنشاء، فلا حاجة لتكراره لكل أدمن.
+  tasks.push(
+    createAdminAlert({
+      dedupeKey: `order_created:panel:${orderId}`,
+      type: "order",
+      requiredPermission: "orders",
+      title: "طلب جديد",
+      body: `تم استلام طلب جديد رقم #${orderNumber}`,
+      actionRoute,
+      entityType: "order",
+      entityId: orderId,
+      // ✅ sendPush: false — كل أدمن بصلاحية "orders" يتلقى بالفعل Push
+      // حقيقياً أعلاه عبر notify() الشخصي (قناة إشعاراته كمستخدم)، فلو
+      // ترك هذا الاستدعاء على الافتراضي (true) كان سيصل نفس التنبيه
+      // Push مرتين لنفس الأدمن لنفس الطلب. راجع تعليق sendPush بأعلى
+      // lib/adminAlerts.ts للشرح الكامل.
+      sendPush: false,
+    })
+  );
 
   await Promise.all(tasks);
 });

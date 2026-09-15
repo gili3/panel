@@ -357,6 +357,29 @@ service cloud.firestore {
     // ═══════════════════════════════════════════════════════════════════
     //  orders/{orderId} — الطلبات
     // ═══════════════════════════════════════════════════════════════════
+    // ═══════════════════════════════════════════════════════════════════
+    //  contactMessages/{id} — رسائل شاشة "اتصل بنا" بالتطبيق
+    //  ✅ جديد: كانت هذه الشاشة تعرض نجاحاً وهمياً بلا أي كتابة فعلية —
+    //  الآن تُكتب رسائل حقيقية هنا. إنشاء فقط (حتى بدون تسجيل دخول، مطابقةً
+    //  لسلوك الشاشة نفسها)، بحد أقصى لطول كل حقل لمنع إساءة الاستخدام.
+    //  القراءة/الحذف عبر لوحة التحكم فقط (Admin SDK).
+    // ═══════════════════════════════════════════════════════════════════
+    match /contactMessages/{id} {
+      allow read, update, delete: if false;
+      allow create: if
+        request.resource.data.keys().hasOnly(
+          ["name", "email", "subject", "message", "userId", "status", "createdAt"]
+        ) &&
+        request.resource.data.name is string &&
+        request.resource.data.name.size() > 0 && request.resource.data.name.size() <= 100 &&
+        request.resource.data.email is string &&
+        request.resource.data.email.size() > 0 && request.resource.data.email.size() <= 200 &&
+        request.resource.data.message is string &&
+        request.resource.data.message.size() > 0 && request.resource.data.message.size() <= 3000 &&
+        request.resource.data.status == "new" &&
+        (request.resource.data.userId == null || request.resource.data.userId == request.auth.uid);
+    }
+
     match /orders/{orderId} {
       // القراءة: صاحب الطلب أو الأدمن فقط
       allow read: if isSignedIn() &&

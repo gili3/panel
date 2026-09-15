@@ -32,6 +32,27 @@ export async function buildUser(
   const isSuperAdmin = Boolean(ENV.ownerOpenId) && uid === ENV.ownerOpenId;
 
   if (isSuperAdmin) {
+    // ✅ إصلاح: قواعد Firebase Storage (storage.rules) ما عندها طريقة تعرف
+    // فيها OWNER_OPEN_ID (متغيّر بيئة، مو متاح لقواعد Storage إطلاقاً) —
+    // تتحقق فقط من قراءة مباشرة لـusers/{uid}.role == "admin" بـFirestore.
+    // بما أن السوبر أدمن يُحسَب هنا ديناميكياً "بغض النظر عمّا هو مخزَّن
+    // بـFirestore" (تعليق أعلاه)، مستنده الفعلي قد لا يحمل role: "admin"
+    // أبداً — فيُرفض أي رفع مباشر لـFirebase Storage (رفع بانر/منتج/فئة من
+    // لوحة التحكم) بـ"storage/unauthorized" رغم أن الباك إند نفسه يعامله
+    // كأدمن كامل الصلاحيات. نزامن الحقل هنا (قراءة أولاً، كتابة فقط لو لسا
+    // غير مطابقة) حتى تشوف قواعد Storage نفس الصلاحية — دون التأثير على
+    // منطق الدور المُرجَع أدناه (يبقى كما هو، محسوباً ديناميكياً كالسابق).
+    adminDb.collection("users").doc(uid).get()
+      .then((snap) => {
+        if (snap.data()?.role !== "admin") {
+          return adminDb.collection("users").doc(uid).set(
+            { role: "admin", adminPermissions: [...ADMIN_PERMISSIONS] },
+            { merge: true }
+          );
+        }
+      })
+      .catch((error) => console.error("[buildUser] فشل مزامنة دور السوبر أدمن بـFirestore:", error));
+
     return {
       id: uid,
       openId: uid,

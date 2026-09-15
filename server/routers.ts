@@ -3,6 +3,7 @@ import { publicProcedure, router } from "./_core/trpc";
 import { firestoreRouter } from "./firestore-router";
 import { adminUsersRouter } from "./admin-users-router";
 import { adminNotificationsRouter } from "./admin-notifications-router";
+import { adminContactRouter } from "./admin-contact-router";
 
 export const appRouter = router({
   system: systemRouter,
@@ -25,6 +26,7 @@ export const appRouter = router({
   firestore: firestoreRouter,
   adminUsers: adminUsersRouter,
   adminNotifications: adminNotificationsRouter,
+  adminContact: adminContactRouter,
 });
 
 export type AppRouter = typeof appRouter;

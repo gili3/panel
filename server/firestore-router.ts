@@ -1338,28 +1338,54 @@ export const firestoreRouter = router({
     }),
 
   // --- الإحصائيات المحسّنة ---
+  // ⚡ تحسين أداء: هذا الإجراء يُستدعى في كل مرة تُفتح فيها لوحة التحكم
+  // (Dashboard) — كان سابقاً يجلب مستند كل منتج بالكامل (.get() على كامل
+  // مجموعة products) فقط لحساب totalProducts (.size) وlowStockProducts،
+  // بصرف النظر عن عدد المنتجات الفعلي بالمتجر. الآن:
+  //   1) totalProducts عبر count() — قراءة واحدة مجمَّعة بغض النظر عن الحجم.
+  //   2) lowStockProducts عبر where(isActive, stock<=threshold) مباشرة —
+  //      يجلب فقط المنتجات منخفضة المخزون فعلياً، لا كل المنتجات لتصفيتها
+  //      لاحقاً بالكود. يحتاج فهرساً مركّباً (isActive + stock)، أُضيف إلى
+  //      firestore.indexes.json.
+  // النتيجة: قراءة تتناسب مع عدد المنتجات منخفضة المخزون فقط (عادة قليل)
+  // بدل كامل كتالوج المنتجات — فرق كبير مع نمو المتجر.
+  //
+  // ⚠️ ordersSnapshot الكامل ما زال ضرورياً هنا: topProducts (الأكثر مبيعاً)
+  // يحتاج فعلياً حقل items داخل كل طلب، ولا يوجد بديل عبر aggregation queries
+  // (Firestore لا يدعم تجميع مصفوفات). هذا يبقى أكبر كلفة متبقية بالدالة —
+  // الحل الجذري (مستقبلاً) هو مستند تجميع مُحدَّث تراكمياً بـCloud Function
+  // عند كل طلب (onOrderCreated/onOrderStatusChanged) بدل إعادة حسابه بالكامل
+  // من الصفر بكل فتح للوحة التحكم؛ لم يُطبَّق هنا تفادياً لتغيير معماري أكبر
+  // بدون طلب صريح لذلك.
   getAdminStats: adminProcedure
     .query(async ({ ctx }) => {
-      
-      const productsSnapshot = await adminDb.collection("products").get();
-      const ordersSnapshot = await adminDb.collection("orders").get();
-      // ✅ إصلاح (Audit المرحلة 5/17): كان يُجلَب كل مستند فئة كاملاً فقط
-      // لاستخدام العدد (.size) — استعلام العدّ المُجمَّع (count aggregation)
-      // يكلّف قراءة مستند واحدة فقط بصرف النظر عن عدد الفئات الفعلي، بدل
-      // قراءة كل مستند بالكامل. لا يمسّ هذا أي منطق حساب آخر (الإيرادات/
-      // المنتجات الأكثر مبيعاً ما زالت تعتمد القراءة الكاملة لـproducts/orders
-      // كما هي، لأنها تحتاج فعلاً محتوى كل مستند وليس عدده فقط).
-      const categoriesCountSnapshot = await adminDb.collection("categories").count().get();
-      
-      const settingsDoc = await adminDb.collection("settings").doc("store").get();
+
+      const settingsDocPromise = adminDb.collection("settings").doc("store").get();
+      const categoriesCountPromise = adminDb.collection("categories").count().get();
+      const totalProductsCountPromise = adminDb.collection("products").count().get();
+      const ordersPromise = adminDb.collection("orders").get();
+
+      const [settingsDoc, categoriesCountSnapshot, totalProductsCountSnapshot, ordersSnapshot] =
+        await Promise.all([settingsDocPromise, categoriesCountPromise, totalProductsCountPromise, ordersPromise]);
+
       const lowStockThreshold = settingsDoc.exists ? (settingsDoc.data()?.lowStockThreshold || 5) : 5;
+
+      // ✅ استعلام مباشر بدل جلب كل المنتجات وتصفيتها بالذاكرة
+      const lowStockSnapshot = await adminDb.collection("products")
+        .where("isActive", "==", true)
+        .where("stock", "<=", lowStockThreshold)
+        .orderBy("stock", "asc")
+        .limit(50)
+        .get();
+      const lowStockProducts = lowStockSnapshot.docs
+        .map((doc) => ({ id: doc.id, name: doc.data().name, stock: doc.data().stock }));
 
       let totalRevenue = 0;
       let pendingOrders = 0;
       let completedOrders = 0;
-      
+
       const productSales: Record<string, { name: string; quantity: number; revenue: number }> = {};
-      
+
       ordersSnapshot.docs.forEach((doc: any) => {
         const data = doc.data();
         if (data.status === 'delivered') {
@@ -1380,40 +1406,37 @@ export const firestoreRouter = router({
         }
       });
 
-      const lowStockProducts = productsSnapshot.docs
-        .filter((doc: any) => {
-          const data = doc.data();
-          return data.isActive && data.stock <= lowStockThreshold;
-        })
-        .map((doc: any) => ({ id: doc.id, name: doc.data().name, stock: doc.data().stock }));
-
       const topProducts = Object.entries(productSales)
         .sort(([, a], [, b]) => b.quantity - a.quantity)
         .slice(0, 5)
         .map(([productId, data]) => ({ productId, ...data }));
 
+      // ⚡ تحسين أداء: عدّ مستندات users/{uid} (قراءة مجمَّعة واحدة) بدل
+      // صفحات adminAuth.listUsers المتكررة — أسرع بكثير مع نمو عدد الحسابات.
+      // يفترض أن كل حساب حقيقي له مستند users/{uid} مقابل (مضمون من مسار
+      // التسجيل الموحَّد على OTP)؛ نُبقي مسار Auth القديم كخط رجوع فقط إن
+      // فشل العدّ لأي سبب (مثال: صلاحيات مؤقتة)، وليس كمسار أساسي بعد الآن.
       let totalCustomers = 0;
       try {
-        // ✅ إصلاح: adminAuth.listUsers(1000) يرجّع صفحة واحدة فقط (حد أقصى
-        // 1000 مستخدم) بدون أي pagination — أي متجر يتجاوز 1000 مستخدم مسجَّل
-        // كان سيرى "إجمالي العملاء" متجمّداً بصمت تام عند حد الصفحة الأولى
-        // (١٠٠٠ أو أقل بقليل) للأبد، بدون أي خطأ ظاهر. الآن نستمر بجلب كل
-        // الصفحات عبر pageToken حتى نهاية القائمة الفعلية.
-        let totalUsers = 0;
-        let pageToken: string | undefined;
-        do {
-          const listUsersResult = await adminAuth.listUsers(1000, pageToken);
-          totalUsers += listUsersResult.users.length;
-          pageToken = listUsersResult.pageToken;
-        } while (pageToken);
-        totalCustomers = totalUsers;
+        const usersCountSnapshot = await adminDb.collection("users").count().get();
+        totalCustomers = usersCountSnapshot.data().count;
       } catch (e) {
-        const usersSnapshot = await adminDb.collection("users").get();
-        totalCustomers = usersSnapshot.size;
+        try {
+          let totalUsers = 0;
+          let pageToken: string | undefined;
+          do {
+            const listUsersResult = await adminAuth.listUsers(1000, pageToken);
+            totalUsers += listUsersResult.users.length;
+            pageToken = listUsersResult.pageToken;
+          } while (pageToken);
+          totalCustomers = totalUsers;
+        } catch (e2) {
+          totalCustomers = 0;
+        }
       }
 
       return {
-        totalProducts: productsSnapshot.size,
+        totalProducts: totalProductsCountSnapshot.data().count,
         totalOrders: ordersSnapshot.size,
         totalCategories: categoriesCountSnapshot.data().count,
         totalCustomers,

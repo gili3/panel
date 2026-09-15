@@ -1010,7 +1010,7 @@ export default function AdminDashboard() {
                 {(stats.lowStockProducts || []).slice(0, 5).map((p: any) => (
                   <div key={p.id} className="flex justify-between text-xs">
                     <span className="text-foreground truncate max-w-[120px]">{p.name}</span>
-                    <span className="text-red-600 font-semibold">{p.stock}</span>
+                    <span className="text-red-600 font-semibold">{formatNumber(p.stock ?? 0)}</span>
                   </div>
                 ))}
                 <p className="text-xs text-muted-foreground mt-1">الحد: {stats?.lowStockThreshold ?? 5} وحدة</p>
@@ -1147,7 +1147,7 @@ export default function AdminDashboard() {
                               <p className="text-sm">
                                 <span className="font-semibold">السعر النهائي: </span>
                                 <span className="text-primary font-bold">
-                                  {calculateFinalPrice(productForm.basePrice, true, productForm.discountType, productForm.discountValue).price} ج.س
+                                  {formatNumber(calculateFinalPrice(productForm.basePrice, true, productForm.discountType, productForm.discountValue).price)} ج.س
                                 </span>
                                 {productForm.discountType === 'percentage' && (
                                   <span className="text-xs text-muted-foreground mr-2">(خصم {productForm.discountValue}%)</span>
@@ -1327,7 +1327,7 @@ export default function AdminDashboard() {
                             <TableCell>{formatNumber(order.total ?? 0)} ج.س</TableCell>
                             <TableCell>
                               {order.createdAt ? (
-                                new Date(order.createdAt).toLocaleDateString('ar-EG', {
+                                new Date(order.createdAt).toLocaleDateString('ar-EG-u-nu-latn', {
                                   year: 'numeric', month: 'short', day: 'numeric', calendar: 'gregory'
                                 })
                               ) : "-"}

@@ -10,8 +10,11 @@
  */
 export function formatNumber(num: number, decimals: number = 0): string {
   if (!num && num !== 0) return "0";
-  // استخدام "en-US" أو "ar-EG" مع خيار useGrouping لضمان فواصل الآلاف
-  return num.toLocaleString("ar-EG", {
+  // ملاحظة: كانت تُستخدم "ar-EG" هنا، وهي تُخرج أرقاماً هندية شرقية
+  // بفواصل عربية (١٬٢٣٤٫٥٦) — شكل مختلف تماماً عن تطبيق الأندرويد الذي
+  // يعرض أرقاماً لاتينية. تم التحويل إلى "en-US" ليتطابق العرض 100%
+  // بين لوحة التحكم والأندرويد (كلاهما الآن: أرقام لاتينية + فاصلة إنجليزية).
+  return num.toLocaleString("en-US", {
     minimumFractionDigits: decimals,
     maximumFractionDigits: decimals,
     useGrouping: true,

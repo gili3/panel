@@ -1,6 +1,6 @@
 import {
   BarChart3, Package, ShoppingBag, Tag, Image as ImageIcon,
-  Star, Percent, Settings, Users, Bell,
+  Star, Percent, Settings, Users, Bell, MessageSquare,
 } from "lucide-react";
 import type { AdminPermission } from "@shared/adminPermissions";
 
@@ -24,6 +24,7 @@ export const ADMIN_SECTIONS: AdminSection[] = [
   { key: "settings", path: "/settings", label: "الإعدادات", icon: Settings, permission: "settings" },
   { key: "users", path: "/users", label: "المستخدمين", icon: Users, permission: "users" },
   { key: "notifications", path: "/notifications", label: "الإشعارات", icon: Bell, permission: "notifications" },
+  { key: "contactMessages", path: "/contact-messages", label: "رسائل التواصل", icon: MessageSquare, permission: "contactMessages" },
 ];
 
 export function userHasAdminPermission(

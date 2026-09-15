@@ -246,7 +246,7 @@ function NotificationsContent() {
                       <p className="font-semibold">{item.title}</p>
                     </div>
                     <span className="text-xs text-muted-foreground shrink-0">
-                      {item.createdAt ? new Date(item.createdAt).toLocaleString("ar-EG", { calendar: "gregory" }) : "-"}
+                      {item.createdAt ? new Date(item.createdAt).toLocaleString("ar-EG-u-nu-latn", { calendar: "gregory" }) : "-"}
                     </span>
                   </div>
                   <p className="text-sm text-muted-foreground mt-1">{item.body}</p>

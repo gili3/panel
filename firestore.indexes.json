@@ -97,10 +97,12 @@
     { "collectionGroup": "orders", "queryScope": "COLLECTION", "fields": [
       { "fieldPath": "status", "order": "ASCENDING" },
       { "fieldPath": "createdAt", "order": "DESCENDING" }
-    ]},
-    { "collectionGroup": "adminAlerts", "queryScope": "COLLECTION_GROUP", "fields": [
-      { "fieldPath": "alertId", "order": "ASCENDING" }
     ]}
   ],
-  "fieldOverrides": []
+  "fieldOverrides": [
+    { "collectionGroup": "adminAlerts", "fieldPath": "alertId", "indexes": [
+      { "order": "ASCENDING", "queryScope": "COLLECTION_GROUP" },
+      { "order": "DESCENDING", "queryScope": "COLLECTION_GROUP" }
+    ]}
+  ]
 }

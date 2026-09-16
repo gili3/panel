@@ -235,6 +235,24 @@ service cloud.firestore {
         allow update: if isOwner(userId) && onlyChangedKeys(['isRead', 'readAt']);
         allow delete: if isOwner(userId);
       }
+
+      // ── users/{userId}/adminAlerts/{alertId} — جرس تنبيهات لوحة التحكم (v2) ──
+      // فان-آوت لكل أدمن مستهدَف: عند إنشاء تنبيه بمستند adminAlerts العلوي
+      // (functions/src/lib/adminAlerts.ts)، يُكتب أيضاً نسخة هنا لكل أدمن
+      // كانت صلاحيته وقتها تشمل requiredPermission الخاص بالتنبيه. هذا يحوّل
+      // فلترة الصلاحيات من "وقت القراءة" (كما كانت بـadmin-alerts-router.ts)
+      // إلى "وقت الكتابة" فقط — التضحية الوحيدة: أدمن يُمنح صلاحية جديدة لاحقاً
+      // لا يرى تلقائياً تنبيهات قديمة تخص تلك الصلاحية إلا عبر backfill صريح
+      // (راجع server/admin-alerts-backfill.ts) يُستدعى فوراً عند منح الصلاحية.
+      // بالمقابل نكسب: قاعدة أمان بسيطة isOwner() فقط (بلا get() على صلاحيات
+      // متغيّرة داخل استعلام قائمة)، تدعم onSnapshot حي بثقة تامة — تماماً
+      // كمصدر الحقيقة نفسه المستخدم لإشعارات العميل النهائي أعلاه.
+      match /adminAlerts/{alertId} {
+        allow read: if isOwner(userId);
+        allow create: if false; // فقط عبر Admin SDK (Cloud Functions أو مسار منح الصلاحيات بالسيرفر)
+        allow update: if isOwner(userId) && onlyChangedKeys(['isRead', 'readAt']);
+        allow delete: if false; // التنظيف عبر functions/src/scheduled/adminAlertsCleanup.ts فقط
+      }
     }
 
     // ═══════════════════════════════════════════════════════════════════

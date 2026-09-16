@@ -4,6 +4,7 @@ import { useAuth } from "@/_core/hooks/useAuth";
 import { Button } from "@/components/ui/button";
 import { LogOut, ShieldCheck } from "lucide-react";
 import NotificationBell from "@/components/NotificationBell";
+import PushPermissionBanner from "@/components/PushPermissionBanner";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -55,6 +56,7 @@ export default function Layout({ children }: LayoutProps) {
           </div>
         </header>
       )}
+      {user?.role === "admin" && <PushPermissionBanner />}
       <main className="flex-1">{children}</main>
 
       <AlertDialog open={showLogoutConfirm} onOpenChange={setShowLogoutConfirm}>

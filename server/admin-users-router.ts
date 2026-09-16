@@ -10,6 +10,7 @@ import { TRPCError } from "@trpc/server";
 import { adminAuth, adminDb } from "./firebase-admin";
 import { router, adminPermission, superAdminProcedure } from "./_core/trpc";
 import { ADMIN_PERMISSIONS, type AdminPermission } from "@shared/adminPermissions";
+import { backfillAdminAlertsForNewPermissions } from "./admin-alerts-backfill";
 import { ENV } from "./_core/env";
 
 const permissionSchema = z.enum(ADMIN_PERMISSIONS as unknown as [AdminPermission, ...AdminPermission[]]);
@@ -104,6 +105,11 @@ export const adminUsersRouter = router({
         },
         { merge: true }
       );
+      // ترقية جديدة لأدمن = كل صلاحياته "جديدة" عليه بالكامل؛ يستحق رؤية
+      // آخر تنبيهات الجرس المطابقة لها فوراً بدل انتظار حدث جديد فقط.
+      if (input.isAdmin && (input.permissions ?? []).length > 0) {
+        await backfillAdminAlertsForNewPermissions(input.uid, input.permissions ?? []);
+      }
       return { success: true };
     }),
 
@@ -114,10 +120,19 @@ export const adminUsersRouter = router({
       if (input.uid === ENV.ownerOpenId) {
         throw new TRPCError({ code: "FORBIDDEN", message: "صاحب المتجر يملك كل الصلاحيات دائماً" });
       }
+      const before = await adminDb.collection("users").doc(input.uid).get();
+      const previousPermissions: AdminPermission[] = Array.isArray(before.data()?.adminPermissions)
+        ? before.data()!.adminPermissions
+        : [];
       await adminDb.collection("users").doc(input.uid).set(
         { adminPermissions: input.permissions },
         { merge: true }
       );
+      // فقط الصلاحيات المضافة حديثاً (وليست كل input.permissions) — أدمن
+      // يحتفظ بصلاحية كان يملكها أصلاً لا يحتاج نسخ تنبيهاتها من جديد،
+      // هو مشترك بها فعلياً منذ إنشائها.
+      const newlyGranted = input.permissions.filter((p) => !previousPermissions.includes(p));
+      await backfillAdminAlertsForNewPermissions(input.uid, newlyGranted);
       return { success: true };
     }),
 

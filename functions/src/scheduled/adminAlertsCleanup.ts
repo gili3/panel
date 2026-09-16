@@ -4,13 +4,19 @@ import { db } from "../lib/admin";
 
 /**
  * تنظيف يومي لتنبيهات جرس لوحة التحكم (adminAlerts) — تُقرأ آخر 30 فقط
- * أصلاً بـserver/admin-alerts-router.ts، فمجموعة تكبر بلا حد ليس لها أي
- * فائدة قرائية، فقط تكلفة تخزين/فهرسة متراكمة بلا داعٍ.
+ * أصلاً بحسب limit() بـclient/src/hooks/useAdminAlerts.ts، فمجموعة تكبر
+ * بلا حد ليس لها أي فائدة قرائية، فقط تكلفة تخزين/فهرسة متراكمة بلا داعٍ.
  *
  * القاعدة (بطلب صاحب المتجر): يُحذف أي تنبيه أقدم من 14 يوماً، **إلا** لو
  * كان من ضمن أحدث 30 تنبيه على الإطلاق — فهذه الـ30 تبقى دائماً بصرف
  * النظر عن عمرها، حتى لا يظهر الجرس فارغاً تماماً بعد فترة هدوء طويلة
  * (متجر بلا طلبات/رسائل لأكثر من أسبوعين، مثلاً).
+ *
+ * ✅ v2: كل تنبيه محذوف من المستند العلوي يُحذف أيضاً من نسخ الفان-آوت
+ * لدى كل أدمن (users/{uid}/adminAlerts/{alertId}) عبر استعلام
+ * collectionGroup بحقل alertId — بدون هذا كانت نسخ الأدمنز تتراكم للأبد
+ * بلا أي تنظيف مقابل (limit(30) بالقراءة يخفي التراكم عن العين لكن لا
+ * يمنعه فعلياً).
  */
 const KEEP_RECENT_COUNT = 30;
 const MAX_AGE_DAYS = 14;
@@ -46,6 +52,35 @@ export const cleanupAdminAlerts = onSchedule(
       await batch.commit();
     }
 
+    await deleteFanOutCopies(toDelete.map((doc) => doc.id));
+
     console.log(`[cleanupAdminAlerts] تم حذف ${toDelete.length} تنبيهاً أقدم من ${MAX_AGE_DAYS} يوماً`);
   }
 );
+
+// حد عملياً لعامل 'in' بـFirestore — نجزّئ معرّفات التنبيهات المحذوفة لدفعات
+// آمنة (10 حالياً، أقل من أي حد معروف لأي إصدار SDK/Firestore).
+const IN_CHUNK_SIZE = 10;
+
+function chunk<T>(items: T[], size: number): T[][] {
+  const out: T[][] = [];
+  for (let i = 0; i < items.length; i += size) out.push(items.slice(i, i + size));
+  return out;
+}
+
+/** يحذف نسخ الفان-آوت (users/*\/adminAlerts/{alertId}) المطابقة لهذه المعرّفات لدى كل الأدمنز، عبر collectionGroup + حقل alertId. */
+async function deleteFanOutCopies(alertIds: string[]): Promise<void> {
+  if (alertIds.length === 0) return;
+  for (const idsChunk of chunk(alertIds, IN_CHUNK_SIZE)) {
+    const snapshot = await db
+      .collectionGroup("adminAlerts")
+      .where("alertId", "in", idsChunk)
+      .get();
+    if (snapshot.empty) continue;
+    for (const batchDocs of chunk(snapshot.docs, BATCH_SIZE)) {
+      const batch = db.batch();
+      for (const doc of batchDocs) batch.delete(doc.ref);
+      await batch.commit();
+    }
+  }
+}

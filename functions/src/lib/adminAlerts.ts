@@ -32,12 +32,17 @@ type AdminPermission =
  * يعني مستنداً منفصلاً لكل أدمن لكل حدث (fan-out).
  *
  * هنا: مستند تنبيه *واحد* لكل حدث بمجموعة top-level مستقلة (adminAlerts)،
- * يحمل الصلاحية المطلوبة لرؤيته (requiredPermission) بدل تحديد الأدمنز
- * أنفسهم وقت الإنشاء — القراءة (server/admin-alerts-router.ts) تفلتر حسب
- * صلاحيات الأدمن الحالي فعلياً (أو isSuperAdmin) وقت الطلب، فأي أدمن جديد
- * يُمنح الصلاحية لاحقاً يرى فوراً كل التنبيهات القديمة المطابقة، بلا أي
- * حاجة لإعادة كتابة شيء. حالة "مقروء" فردية per-admin عبر مصفوفة readBy
- * (عدد الأدمنز صغير عملياً، فمصفوفة أبسط من subcollection منفصلة).
+ * يحمل الصلاحية المطلوبة لرؤيته (requiredPermission)، ويبقى دائماً مصدر
+ * الحقيقة الكامل (Admin-SDK-only، بلا حد قراءة) لهذا الحدث.
+ *
+ * ✅ v2: بالإضافة لذلك، فور إنشاء المستند نفان-آوته أيضاً (fanOutAlertToAdmins
+ * أدناه) لمستند مستقل تحت كل أدمن معنيّ حالياً بهذه الصلاحية
+ * (users/{uid}/adminAlerts/{alertId}) — هذا ما يشترك به العميل مباشرة
+ * (onSnapshot، راجع client/src/hooks/useAdminAlerts.ts) بدل قراءة هذا
+ * المستند العلوي عبر tRPC + polling كما كان سابقاً. أدمن يُمنح الصلاحية
+ * *لاحقاً* لا يرى تلقائياً تنبيهات هذه المجموعة العلوية القديمة (الفلترة
+ * الآن وقت الكتابة لا وقت القراءة) — لهذا server/admin-alerts-backfill.ts
+ * ينسخ له صراحةً آخر التنبيهات المطابقة فور منحه الصلاحية.
  *
  * نفس قرار التعريف الحتمي (sha1 dedupeKey) من notifications.ts — استدعاء
  * متكرر لنفس الحدث (إعادة تنفيذ Cloud Function) يكتب نفس المستند فلا
@@ -207,7 +212,48 @@ async function pushToAdmins(
   }
 }
 
-/** ينشئ تنبيه لوحة تحكم idempotent، ويرسل Push فعلياً لأجهزة الأدمنز المعنيين (ما لم يُطلب تخطيه صراحة). لا يرمي أبداً — فشل التنبيه لا يجب أن يُسقط الحدث الأصلي (إنشاء الطلب/الرسالة). */
+/**
+ * ✅ v2 — فان-آوت للقراءة الحية: يكتب نسخة من التنبيه بمستند مستقل تحت
+ * كل أدمن مستهدَف (users/{uid}/adminAlerts/{alertId}) بدل الاعتماد على
+ * قراءة مستند adminAlerts العلوي مباشرة (كان يتطلب polling عبر tRPC لأن
+ * قواعد الأمان لا يمكنها تفويض قائمة بحسب صلاحية متغيّرة بأمان تام).
+ * الآن كل أدمن يشترك مباشرة (onSnapshot) بمجموعته الفرعية الخاصة به —
+ * نفس فكرة users/{uid}/notifications تماماً لكن لتنبيهات اللوحة.
+ * alertId نفسه (sha1 حتمي) يُستخدم كمعرّف المستند هنا أيضاً، فإعادة تنفيذ
+ * نفس الحدث (retry) يستبدل نفس النسخة لدى كل أدمن بدل تكرارها.
+ * حقل alertId مكرَّر داخل المستند (رغم كونه أيضاً id المستند) خصيصاً
+ * ليتيح استعلام collectionGroup به لاحقاً بـadminAlertsCleanup.ts (لا يمكن
+ * الاستعلام بسهولة بـFieldPath.documentId عبر آباء مختلفين بـcollectionGroup).
+ */
+async function fanOutAlertToAdmins(
+  uids: string[],
+  alertId: string,
+  input: CreateAdminAlertInput
+): Promise<void> {
+  if (uids.length === 0) return;
+  const batch = db.batch();
+  for (const uid of uids) {
+    const ref = db.collection("users").doc(uid).collection("adminAlerts").doc(alertId);
+    batch.set(ref, {
+      alertId,
+      type: input.type,
+      title: input.title,
+      body: input.body,
+      actionRoute: input.actionRoute ?? null,
+      entityType: input.entityType ?? null,
+      entityId: input.entityId ?? null,
+      isRead: false,
+      createdAt: Timestamp.now(),
+    });
+  }
+  try {
+    await batch.commit();
+  } catch (error) {
+    console.error("[AdminAlerts] تعذّر فان-آوت التنبيه لمستندات الأدمنز:", error);
+  }
+}
+
+/** ينشئ تنبيه لوحة تحكم idempotent، يفان-آوته حياً لكل أدمن معني، ويرسل Push فعلياً لأجهزتهم (ما لم يُطلب تخطيه صراحة). لا يرمي أبداً — فشل التنبيه لا يجب أن يُسقط الحدث الأصلي (إنشاء الطلب/الرسالة). */
 export async function createAdminAlert(input: CreateAdminAlertInput): Promise<void> {
   try {
     const id = alertIdFromDedupeKey(input.dedupeKey);
@@ -231,12 +277,15 @@ export async function createAdminAlert(input: CreateAdminAlertInput): Promise<vo
       return true;
     });
 
-    // Push فقط لتنبيه جُدَّ إنشاؤه فعلاً الآن — إعادة تنفيذ نفس الحدث
-    // (retry من Cloud Functions) لا يجب أن تُنتج Push مزعجاً ثانياً لتنبيه
-    // موجود أصلاً بالجرس، بنفس منطق notify() بالضبط.
-    if (created && input.sendPush !== false) {
+    // فان-آوت + Push فقط لتنبيه جُدَّ إنشاؤه فعلاً الآن — إعادة تنفيذ نفس
+    // الحدث (retry من Cloud Functions) لا يجب أن تُنتج تنبيهاً ولا Push
+    // مزعجَين ثانيةً لتنبيه موجود أصلاً، بنفس منطق notify() بالضبط.
+    if (created) {
       const uids = await getAdminUidsForPermission(input.requiredPermission);
-      await pushToAdmins(uids, id, input.title, input.body, input.actionRoute);
+      await fanOutAlertToAdmins(uids, id, input);
+      if (input.sendPush !== false) {
+        await pushToAdmins(uids, id, input.title, input.body, input.actionRoute);
+      }
     }
   } catch (error) {
     console.error("[AdminAlerts] تعذّر إنشاء تنبيه اللوحة:", error);

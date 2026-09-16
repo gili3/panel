@@ -4,7 +4,12 @@ import { firestoreRouter } from "./firestore-router";
 import { adminUsersRouter } from "./admin-users-router";
 import { adminNotificationsRouter } from "./admin-notifications-router";
 import { adminContactRouter } from "./admin-contact-router";
-import { adminAlertsRouter } from "./admin-alerts-router";
+// ✅ v2: adminAlertsRouter (list/markRead/markAllRead عبر tRPC + polling)
+// أُزيل بالكامل — الجرس الآن onSnapshot حي مباشرة على
+// users/{uid}/adminAlerts (راجع client/src/hooks/useAdminAlerts.ts)،
+// وmarkRead/markAllRead كتابات Firestore مباشرة يسمح بها firestore.rules
+// (isOwner + onlyChangedKeys(['isRead','readAt'])) بلا أي حاجة لخادم وسيط.
+// ملف server/admin-alerts-router.ts نفسه يُحذف من المشروع.
 
 export const appRouter = router({
   system: systemRouter,
@@ -28,7 +33,6 @@ export const appRouter = router({
   adminUsers: adminUsersRouter,
   adminNotifications: adminNotificationsRouter,
   adminContact: adminContactRouter,
-  adminAlerts: adminAlertsRouter,
 });
 
 export type AppRouter = typeof appRouter;

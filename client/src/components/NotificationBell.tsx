@@ -16,16 +16,20 @@ import {
   enablePushNotificationsWithRetry,
   type PushPermissionState,
 } from "@/lib/push";
+import { useAdminAlerts, type AdminAlertItem } from "@/hooks/useAdminAlerts";
 
 // جرس تنبيهات لوحة التحكم (طلبات جديدة + رسائل تواصل جديدة، الخ...).
-// يعتمد على polling بسيط (لا اشتراك Firestore حي بعد) — كافٍ لواجهة إدارية
-// وليست تطبيق دردشة، ويتجنب فتح اتصال Firestore إضافي فوق كل ما هو موجود
-// أصلاً بـuseAuth (onSnapshot لمستند المستخدم). القراءة والفلترة حسب
-// الصلاحيات تتم بالكامل بالسيرفر (راجع server/admin-alerts-router.ts).
+// ✅ v2: onSnapshot حي على users/{uid}/adminAlerts بدل trpc.adminAlerts.list +
+// refetchInterval(20_000) — كان التحديث السابق يعتمد فعلياً على polling كل
+// 20 ثانية (يتباطأ أكثر إن كان التبويب بالخلفية، لأن المتصفحات تُحجِّم
+// مؤقتات التبويبات غير المركَّزة)، فيظهر التنبيه "صامتاً" داخل اللوحة لدقائق
+// أحياناً قبل أن يُلتقَط. الآن كل تنبيه يظهر فور كتابته بالمستند مباشرة —
+// راجع client/src/hooks/useAdminAlerts.ts للتفاصيل المعمارية الكاملة، وراجع
+// server/admin-alerts-router.ts (محذوف) — القراءة/التعليم كمقروء لم يعودا
+// يمران بالسيرفر إطلاقاً، بل بقواعد أمان Firestore مباشرة.
 const ALERT_ICON: Record<string, typeof PackageOpen> = {
   order: PackageOpen,
   contactMessage: Mail,
-  // ✅ جديد: تنبيه المخزون المنخفض اليومي (functions/src/scheduled/lowStockAlert.ts)
   lowStock: PackageX,
 };
 
@@ -43,21 +47,7 @@ function timeAgo(iso: string | null): string {
 
 export default function NotificationBell() {
   const [, setLocation] = useLocation();
-  const utils = trpc.useUtils();
-
-  const { data, isLoading } = trpc.adminAlerts.list.useQuery(undefined, {
-    // ✅ "جرس حقيقي" بدون websocket مخصص: إعادة جلب دورية + عند رجوع
-    // التركيز للتبويب، بما يكفي لظهور تنبيه خلال ثوانٍ من وصوله فعلياً.
-    refetchInterval: 20_000,
-    refetchOnWindowFocus: true,
-  });
-
-  const markRead = trpc.adminAlerts.markRead.useMutation({
-    onSuccess: () => utils.adminAlerts.list.invalidate(),
-  });
-  const markAllRead = trpc.adminAlerts.markAllRead.useMutation({
-    onSuccess: () => utils.adminAlerts.list.invalidate(),
-  });
+  const { items, unreadCount, isLoading, markRead, markAllRead } = useAdminAlerts();
 
   // ✅ جديد: تفعيل Push فعلياً من هنا — قبل هذا لم يكن هناك أي زر بكامل
   // اللوحة يستدعي enablePushNotifications، فبقيت كل بنية الـPush (بما فيها
@@ -92,11 +82,8 @@ export default function NotificationBell() {
     }
   };
 
-  const items = data?.items ?? [];
-  const unreadCount = data?.unreadCount ?? 0;
-
-  const handleItemClick = (item: (typeof items)[number]) => {
-    if (!item.isRead) markRead.mutate({ ids: [item.id] });
+  const handleItemClick = (item: AdminAlertItem) => {
+    if (!item.isRead) markRead(item.id);
     if (item.actionRoute) setLocation(item.actionRoute);
   };
 
@@ -123,8 +110,7 @@ export default function NotificationBell() {
               variant="ghost"
               size="sm"
               className="h-7 text-xs"
-              onClick={() => markAllRead.mutate()}
-              disabled={markAllRead.isPending}
+              onClick={markAllRead}
             >
               <CheckCheck className="w-3.5 h-3.5 ml-1" />
               تعليم الكل كمقروء

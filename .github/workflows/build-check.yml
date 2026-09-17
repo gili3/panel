@@ -1,0 +1,57 @@
+name: فحص وبناء اللوحة تلقائيًا (يحدّث lockfile لوحده)
+
+# يشتغل تلقائيًا كل ما يوصل push على main يمس اللوحة نفسها (client/server)،
+# بعكس deploy-functions.yml اللي خاص بـ functions/Firestore فقط.
+# يسوي: pnpm install، فحص الأنواع (tsc)، بناء تجريبي (vite + esbuild)،
+# وإذا pnpm install غيّر أي شيء بـ pnpm-lock.yaml، يكومت التحديث ويرفعه
+# لنفس الفرع تلقائيًا بدون ما تحتاج تسويها يدوي على جهازك.
+on:
+  push:
+    branches: [main]
+    paths:
+      - "client/**"
+      - "server/**"
+      - "shared/**"
+      - "package.json"
+      - "pnpm-lock.yaml"
+      - "vite.config.ts"
+      - "tsconfig.json"
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: "pnpm"
+
+      - name: تثبيت الباكجات (يولّد/يحدّث pnpm-lock.yaml إذا احتاج)
+        run: pnpm install --no-frozen-lockfile
+
+      - name: فحص الأنواع (tsc)
+        run: pnpm run check
+
+      - name: بناء تجريبي (يتأكد إن البناء ما ينكسر)
+        run: pnpm run build
+
+      - name: رفع pnpm-lock.yaml تلقائيًا إذا تغيّر
+        run: |
+          if ! git diff --quiet -- pnpm-lock.yaml; then
+            git config user.name "github-actions[bot]"
+            git config user.email "github-actions[bot]@users.noreply.github.com"
+            git add pnpm-lock.yaml
+            git commit -m "chore: تحديث pnpm-lock.yaml تلقائيًا [skip ci]"
+            git push
+          else
+            echo "لا يوجد تغيير على pnpm-lock.yaml"
+          fi

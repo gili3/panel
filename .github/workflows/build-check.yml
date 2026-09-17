@@ -6,6 +6,7 @@ name: فحص وبناء اللوحة تلقائيًا (يحدّث lockfile لو�
 # وإذا pnpm install غيّر أي شيء بـ pnpm-lock.yaml، يكومت التحديث ويرفعه
 # لنفس الفرع تلقائيًا بدون ما تحتاج تسويها يدوي على جهازك.
 on:
+  workflow_dispatch: {}
   push:
     branches: [main]
     paths:
@@ -16,6 +17,7 @@ on:
       - "pnpm-lock.yaml"
       - "vite.config.ts"
       - "tsconfig.json"
+      - ".github/workflows/build-check.yml"
 
 permissions:
   contents: write

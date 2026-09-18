@@ -150,6 +150,7 @@ function ContactMessagesContent() {
         <div className="relative w-full max-w-xs">
           <Search className="w-4 h-4 absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground" />
           <Input
+            aria-label="بحث في رسائل التواصل"
             placeholder="بحث بالاسم أو البريد أو النص..."
             value={search}
             onChange={(e) => setSearch(e.target.value)}

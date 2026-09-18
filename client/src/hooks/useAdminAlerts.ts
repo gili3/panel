@@ -12,6 +12,19 @@ import {
 } from "firebase/firestore";
 import { db } from "@/lib/firebase";
 import { useAuth } from "@/_core/hooks/useAuth";
+import { reportSystemWarning, clearSystemWarning } from "@/lib/systemWarnings";
+
+// ✅ إصلاح: كان تقرير هذا العطل يمر بـfirestoreConnectionStatus.ts (بانر
+// مستقل خاص بهذا الملف فقط). الآن يمر بـsystemWarnings.ts العام (بطلب
+// الأدمن: كل تحذيرات النظام بمكان واحد مخصّص — راجع SystemWarningsCenter.tsx
+// بالهيدر). المعرّف "firestoreLiveConnection" مشترك مع useNotifications.ts
+// ومراقب الطلب الجديد بـAdminDashboard.tsx عمداً: الثلاثة تتعطّل لنفس السبب
+// الجذري (فشل App Check عادةً)، فعرضها كتحذير واحد موحّد أوضح من ثلاث بطاقات
+// متكرّرة لنفس المشكلة.
+const FIRESTORE_WARNING_ID = "firestoreLiveConnection";
+const FIRESTORE_WARNING_TITLE = "تعطّل الاتصال المباشر بالإشعارات";
+const FIRESTORE_WARNING_MESSAGE =
+  "فشل الاتصال الحي بـFirestore (على الأرجح إعداد App Check) — الإشعارات الفورية معطّلة، باقي اللوحة يعمل طبيعياً.";
 
 const ALERTS_LIMIT = 30;
 
@@ -89,10 +102,18 @@ export function useAdminAlerts() {
           })
         );
         setIsLoading(false);
+        // ✅ وصل onSnapshot بنجاح (أو استمر يستقبل تحديثات) — أي عطل سابق
+        // من نفس المصدر لم يعد قائماً، فنمسحه من البانر إن كان معروضاً.
+        clearSystemWarning(FIRESTORE_WARNING_ID);
       },
       (err) => {
         console.error("[useAdminAlerts] onSnapshot failed:", err);
         setIsLoading(false);
+        reportSystemWarning(FIRESTORE_WARNING_ID, {
+          title: FIRESTORE_WARNING_TITLE,
+          message: FIRESTORE_WARNING_MESSAGE,
+          severity: "error",
+        });
       }
     );
     return unsubscribe;
@@ -104,7 +125,14 @@ export function useAdminAlerts() {
       updateDoc(doc(db, "users", user.id, "adminAlerts", id), {
         isRead: true,
         readAt: serverTimestamp(),
-      }).catch((err) => console.error("[useAdminAlerts] markRead failed:", err));
+      }).catch((err) => {
+        console.error("[useAdminAlerts] markRead failed:", err);
+        reportSystemWarning(FIRESTORE_WARNING_ID, {
+          title: FIRESTORE_WARNING_TITLE,
+          message: FIRESTORE_WARNING_MESSAGE,
+          severity: "error",
+        });
+      });
     },
     [user?.id]
   );
@@ -120,7 +148,14 @@ export function useAdminAlerts() {
         readAt: serverTimestamp(),
       });
     }
-    batch.commit().catch((err) => console.error("[useAdminAlerts] markAllRead failed:", err));
+    batch.commit().catch((err) => {
+      console.error("[useAdminAlerts] markAllRead failed:", err);
+      reportSystemWarning(FIRESTORE_WARNING_ID, {
+          title: FIRESTORE_WARNING_TITLE,
+          message: FIRESTORE_WARNING_MESSAGE,
+          severity: "error",
+        });
+    });
   }, [user?.id, items]);
 
   const unreadCount = items.filter((i) => !i.isRead).length;

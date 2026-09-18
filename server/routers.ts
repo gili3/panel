@@ -4,6 +4,7 @@ import { firestoreRouter } from "./firestore-router";
 import { adminUsersRouter } from "./admin-users-router";
 import { adminNotificationsRouter } from "./admin-notifications-router";
 import { adminContactRouter } from "./admin-contact-router";
+import { errorLogRouter } from "./error-log-router";
 // ✅ v2: adminAlertsRouter (list/markRead/markAllRead عبر tRPC + polling)
 // أُزيل بالكامل — الجرس الآن onSnapshot حي مباشرة على
 // users/{uid}/adminAlerts (راجع client/src/hooks/useAdminAlerts.ts)،
@@ -33,6 +34,7 @@ export const appRouter = router({
   adminUsers: adminUsersRouter,
   adminNotifications: adminNotificationsRouter,
   adminContact: adminContactRouter,
+  errorLog: errorLogRouter,
 });
 
 export type AppRouter = typeof appRouter;

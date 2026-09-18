@@ -16,3 +16,4 @@ export {
   sendPasswordResetOtp,
   confirmPasswordResetOtp,
 } from "./callables/otpAuth";
+export { reportClientError } from "./callables/errorReporting";

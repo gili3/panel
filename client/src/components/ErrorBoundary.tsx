@@ -2,6 +2,7 @@ import { cn } from "@/lib/utils";
 import { AlertTriangle, RotateCcw } from "lucide-react";
 import { Component, ReactNode, ErrorInfo } from "react";
 import { Button } from "./ui/button";
+import { reportPanelError } from "@/lib/errorReporter";
 
 interface Props {
   children: ReactNode;
@@ -25,6 +26,9 @@ class ErrorBoundary extends Component<Props, State> {
 
   componentDidCatch(error: Error, errorInfo: ErrorInfo) {
     console.error("ErrorBoundary caught an error", error, errorInfo);
+    // ✅ إضافة (بطلب الأدمن): أي خطأ React حقيقي يوقف عرض جزء من الصفحة
+    // (وليس فقط خطأ سكريبت عام يمسكه window.onerror) يُسجَّل هنا أيضاً.
+    reportPanelError(error.message, { stack: error.stack, severity: "error" });
   }
 
   resetError = () => {

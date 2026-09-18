@@ -97,6 +97,19 @@
     { "collectionGroup": "orders", "queryScope": "COLLECTION", "fields": [
       { "fieldPath": "status", "order": "ASCENDING" },
       { "fieldPath": "createdAt", "order": "DESCENDING" }
+    ]},
+    { "collectionGroup": "systemErrorLogs", "queryScope": "COLLECTION", "fields": [
+      { "fieldPath": "resolved", "order": "ASCENDING" },
+      { "fieldPath": "lastSeenAt", "order": "DESCENDING" }
+    ]},
+    { "collectionGroup": "systemErrorLogs", "queryScope": "COLLECTION", "fields": [
+      { "fieldPath": "source", "order": "ASCENDING" },
+      { "fieldPath": "lastSeenAt", "order": "DESCENDING" }
+    ]},
+    { "collectionGroup": "systemErrorLogs", "queryScope": "COLLECTION", "fields": [
+      { "fieldPath": "resolved", "order": "ASCENDING" },
+      { "fieldPath": "source", "order": "ASCENDING" },
+      { "fieldPath": "lastSeenAt", "order": "DESCENDING" }
     ]}
   ],
   "fieldOverrides": [

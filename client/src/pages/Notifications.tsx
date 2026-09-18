@@ -126,9 +126,9 @@ function NotificationsContent() {
         </CardHeader>
         <CardContent className="space-y-4">
           <div>
-            <label className="text-sm font-medium block mb-1.5">الجهة</label>
+            <label htmlFor="notif-target" className="text-sm font-medium block mb-1.5">الجهة</label>
             <Select value={target} onValueChange={(v) => setTarget(v as "all" | "user")}>
-              <SelectTrigger><SelectValue /></SelectTrigger>
+              <SelectTrigger id="notif-target"><SelectValue /></SelectTrigger>
               <SelectContent>
                 <SelectItem value="all">كل المستخدمين</SelectItem>
                 <SelectItem value="user">مستخدم واحد</SelectItem>
@@ -138,8 +138,9 @@ function NotificationsContent() {
 
           {target === "user" && (
             <div>
-              <label className="text-sm font-medium block mb-1.5">البريد الإلكتروني للمستخدم</label>
+              <label htmlFor="notif-target-email" className="text-sm font-medium block mb-1.5">البريد الإلكتروني للمستخدم</label>
               <Input
+                id="notif-target-email"
                 type="email"
                 value={targetEmail}
                 onChange={(e) => setTargetEmail(e.target.value)}
@@ -156,9 +157,9 @@ function NotificationsContent() {
           )}
 
           <div>
-            <label className="text-sm font-medium block mb-1.5">نوع الإشعار</label>
+            <label htmlFor="notif-type" className="text-sm font-medium block mb-1.5">نوع الإشعار</label>
             <Select value={notifType} onValueChange={(v) => setNotifType(v as NotificationTypeOption)}>
-              <SelectTrigger><SelectValue /></SelectTrigger>
+              <SelectTrigger id="notif-type"><SelectValue /></SelectTrigger>
               <SelectContent>
                 <SelectItem value="general">عام</SelectItem>
                 <SelectItem value="promo">عرض ترويجي</SelectItem>
@@ -168,20 +169,20 @@ function NotificationsContent() {
           </div>
 
           <div>
-            <label className="text-sm font-medium block mb-1.5">العنوان</label>
-            <Input value={title} onChange={(e) => setTitle(e.target.value)} maxLength={120} />
+            <label htmlFor="notif-title" className="text-sm font-medium block mb-1.5">العنوان</label>
+            <Input id="notif-title" value={title} onChange={(e) => setTitle(e.target.value)} maxLength={120} />
           </div>
           <div>
-            <label className="text-sm font-medium block mb-1.5">النص</label>
-            <Textarea value={body} onChange={(e) => setBody(e.target.value)} maxLength={500} rows={4} />
+            <label htmlFor="notif-body" className="text-sm font-medium block mb-1.5">النص</label>
+            <Textarea id="notif-body" value={body} onChange={(e) => setBody(e.target.value)} maxLength={500} rows={4} />
           </div>
           <div>
-            <label className="text-sm font-medium block mb-1.5">رابط عند الضغط (اختياري)</label>
-            <Input value={actionRoute} onChange={(e) => setActionRoute(e.target.value)} placeholder="/orders" />
+            <label htmlFor="notif-action-route" className="text-sm font-medium block mb-1.5">رابط عند الضغط (اختياري)</label>
+            <Input id="notif-action-route" value={actionRoute} onChange={(e) => setActionRoute(e.target.value)} placeholder="/orders" />
           </div>
 
           <div>
-            <label className="text-sm font-medium block mb-1.5">صورة العرض (اختياري)</label>
+            <label id="notif-image-label" className="text-sm font-medium block mb-1.5">صورة العرض (اختياري)</label>
             {imagePreview ? (
               <div className="relative w-40">
                 <img src={imagePreview} alt="معاينة الصورة" className="w-40 h-40 object-cover rounded-lg border" />
@@ -195,6 +196,7 @@ function NotificationsContent() {
                     type="button"
                     onClick={handleRemoveImage}
                     className="absolute -top-2 -left-2 bg-destructive text-destructive-foreground rounded-full p-1"
+                    aria-label="إزالة الصورة"
                   >
                     <X className="w-3.5 h-3.5" />
                   </button>
@@ -204,7 +206,7 @@ function NotificationsContent() {
                 )}
               </div>
             ) : (
-              <label className="flex flex-col items-center justify-center w-40 h-40 border-2 border-dashed rounded-lg cursor-pointer text-muted-foreground hover:bg-muted/50">
+              <label aria-labelledby="notif-image-label" className="flex flex-col items-center justify-center w-40 h-40 border-2 border-dashed rounded-lg cursor-pointer text-muted-foreground hover:bg-muted/50">
                 <ImagePlus className="w-6 h-6 mb-1" />
                 <span className="text-xs">JPG, PNG, WebP</span>
                 <input type="file" accept="image/jpeg,image/png,image/webp" className="hidden" onChange={handleImageSelect} />

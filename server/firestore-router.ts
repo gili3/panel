@@ -5,6 +5,7 @@ import { z } from "zod";
 import { TRPCError } from "@trpc/server";
 import { randomBytes } from "node:crypto";
 import { checkCoupon, fetchCoupon, type CouponDoc } from "./coupon-service";
+import { calculateShippingCost, calculateSubtotal, calculateOrderTotal } from "./pricing-service";
 import { ENV } from "./_core/env";
 import { checkRateLimit, clientKey } from "./_core/rateLimit";
 import { syncProductToIndex, removeProductFromIndex, resyncProductsStock } from "./algolia-service";
@@ -107,12 +108,13 @@ async function runOrderPricingTransaction(
       };
     });
 
-    const subtotal = authoritativeItems.reduce((s, i) => s + i.price * i.quantity, 0);
+    const subtotal = calculateSubtotal(authoritativeItems);
 
     const settings = settingsDoc.exists ? settingsDoc.data()! : {};
-    const shippingBase = Number(settings.shippingCost ?? 30);
-    const freeShippingThreshold = Number(settings.freeShippingThreshold ?? 0);
-    const shippingCost = freeShippingThreshold > 0 && subtotal >= freeShippingThreshold ? 0 : shippingBase;
+    // ✅ إصلاح (مراجعة الاختبارات): حساب الشحن استُخرج لدالة نقية مختبَرة
+    // (pricing-service.ts::calculateShippingCost) بدل تكراره inline هنا —
+    // نفس السلوك تماماً، لكنه الآن مغطّى باختبارات مستقلة بلا حاجة لمحاكاة Firestore.
+    const shippingCost = calculateShippingCost(subtotal, settings);
 
     let discountAmount = 0;
     let appliedCoupon: string | null = null;
@@ -151,7 +153,7 @@ async function runOrderPricingTransaction(
       subtotal,
       discountAmount,
       shippingCost,
-      total: Math.round((subtotal - discountAmount + shippingCost) * 100) / 100,
+      total: calculateOrderTotal(subtotal, discountAmount, shippingCost),
       appliedCoupon,
       orderNumberString,
     };

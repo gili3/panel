@@ -3,6 +3,13 @@ import { collection, doc, onSnapshot, orderBy, query, limit } from "firebase/fir
 import { db } from "@/lib/firebase";
 import { trpc } from "@/lib/trpc";
 import { useAuth } from "@/_core/hooks/useAuth";
+import { reportSystemWarning, clearSystemWarning } from "@/lib/systemWarnings";
+
+// نفس معرّف التحذير المستخدم بـuseAdminAlerts.ts عمداً — راجع التعليق هناك.
+const FIRESTORE_WARNING_ID = "firestoreLiveConnection";
+const FIRESTORE_WARNING_TITLE = "تعطّل الاتصال المباشر بالإشعارات";
+const FIRESTORE_WARNING_MESSAGE =
+  "فشل الاتصال الحي بـFirestore (على الأرجح إعداد App Check) — الإشعارات الفورية معطّلة، باقي اللوحة يعمل طبيعياً.";
 import type { AppNotification, NotificationType } from "@shared/types";
 
 const NOTIFICATIONS_LIMIT = 50;
@@ -82,11 +89,17 @@ export function useNotifications() {
         setNotifications(items);
         setIsLoading(false);
         setError(null);
+        clearSystemWarning(FIRESTORE_WARNING_ID);
       },
       (err) => {
         console.error("[useNotifications] onSnapshot failed:", err);
         setError(err as unknown as Error);
         setIsLoading(false);
+        reportSystemWarning(FIRESTORE_WARNING_ID, {
+          title: FIRESTORE_WARNING_TITLE,
+          message: FIRESTORE_WARNING_MESSAGE,
+          severity: "error",
+        });
       }
     );
     return unsubscribe;
@@ -105,8 +118,16 @@ export function useNotifications() {
       (snap) => {
         const value = snap.data()?.notifUnreadCount;
         setUnreadCount(typeof value === "number" && value > 0 ? value : 0);
+        clearSystemWarning(FIRESTORE_WARNING_ID);
       },
-      (err) => console.error("[useNotifications] unread counter listener failed:", err)
+      (err) => {
+        console.error("[useNotifications] unread counter listener failed:", err);
+        reportSystemWarning(FIRESTORE_WARNING_ID, {
+          title: FIRESTORE_WARNING_TITLE,
+          message: FIRESTORE_WARNING_MESSAGE,
+          severity: "error",
+        });
+      }
     );
     return unsubscribe;
   }, [user?.id]);

@@ -53,6 +53,13 @@ export default function Login() {
   const handleGoogleLogin = async () => {
     setLoading(true);
     const provider = new GoogleAuthProvider();
+    // ✅ إصلاح: بلا هذا، Firebase/متصفح جوجل قد يعيد استخدام الحساب المسجَّل
+    // مسبقاً بالمتصفح بصمت (بلا شاشة اختيار حساب) — خصوصاً لو يوجد حساب
+    // جوجل واحد فقط بجلسة المتصفح، أو كان قد اختير لهذا الموقع تحديداً من
+    // قبل. "select_account" يفرض شاشة اختيار الحساب دائماً، حتى لو كان
+    // هناك حساب واحد مسجَّل مسبقاً، فيمكن الأدمن من التبديل بين حسابات
+    // جوجل متعددة كما هو متوقَّع (نفس شكوى "يسجّل معي الحساب السابق").
+    provider.setCustomParameters({ prompt: "select_account" });
     try {
       const cred = await signInWithPopup(auth, provider);
       const idToken = await cred.user.getIdToken();
@@ -136,10 +143,11 @@ export default function Login() {
                 {!otpSent ? (
                   <form onSubmit={handleRequestOtp} className="space-y-5">
                     <div className="space-y-2">
-                      <label className="text-sm font-semibold text-foreground">البريد الإلكتروني</label>
+                      <label htmlFor="forgot-email" className="text-sm font-semibold text-foreground">البريد الإلكتروني</label>
                       <div className="relative">
                         <Mail className="absolute right-3 top-1/2 -translate-y-1/2 w-5 h-5 text-muted-foreground" />
                         <Input
+                          id="forgot-email"
                           type="email"
                           placeholder="your@email.com"
                           value={forgotEmail}
@@ -168,8 +176,9 @@ export default function Login() {
                 ) : (
                   <form onSubmit={handleConfirmOtp} className="space-y-5">
                     <div className="space-y-2">
-                      <label className="text-sm font-semibold text-foreground">رمز التأكيد</label>
+                      <label htmlFor="otp-code" className="text-sm font-semibold text-foreground">رمز التأكيد</label>
                       <Input
+                        id="otp-code"
                         type="text"
                         inputMode="numeric"
                         placeholder="000000"
@@ -181,10 +190,11 @@ export default function Login() {
                       />
                     </div>
                     <div className="space-y-2">
-                      <label className="text-sm font-semibold text-foreground">كلمة المرور الجديدة</label>
+                      <label htmlFor="new-password" className="text-sm font-semibold text-foreground">كلمة المرور الجديدة</label>
                       <div className="relative">
                         <Lock className="absolute right-3 top-1/2 -translate-y-1/2 w-5 h-5 text-muted-foreground" />
                         <Input
+                          id="new-password"
                           type="password"
                           placeholder="••••••••"
                           value={newPassword}
@@ -245,10 +255,11 @@ export default function Login() {
                 )}
 
                 <div className="space-y-2">
-                  <label className="text-sm font-semibold text-foreground">البريد الإلكتروني</label>
+                  <label htmlFor="login-email" className="text-sm font-semibold text-foreground">البريد الإلكتروني</label>
                   <div className="relative">
                     <Mail className="absolute right-3 top-1/2 -translate-y-1/2 w-5 h-5 text-muted-foreground" />
                     <Input
+                      id="login-email"
                       type="email"
                       placeholder="your@email.com"
                       value={email}
@@ -261,7 +272,7 @@ export default function Login() {
 
                 <div className="space-y-2">
                   <div className="flex justify-between items-center">
-                    <label className="text-sm font-semibold text-foreground">كلمة المرور</label>
+                    <label htmlFor="login-password" className="text-sm font-semibold text-foreground">كلمة المرور</label>
                     <button
                       type="button"
                       onClick={() => setShowForgot(true)}
@@ -273,6 +284,7 @@ export default function Login() {
                   <div className="relative">
                     <Lock className="absolute right-3 top-1/2 -translate-y-1/2 w-5 h-5 text-muted-foreground" />
                     <Input
+                      id="login-password"
                       type={showPassword ? "text" : "password"}
                       placeholder="••••••••"
                       value={password}
@@ -284,6 +296,7 @@ export default function Login() {
                       type="button"
                       onClick={() => setShowPassword(!showPassword)}
                       className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground"
+                      aria-label={showPassword ? "إخفاء كلمة المرور" : "إظهار كلمة المرور"}
                     >
                       {showPassword ? <EyeOff className="w-5 h-5" /> : <Eye className="w-5 h-5" />}
                     </button>

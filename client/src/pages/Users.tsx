@@ -156,6 +156,7 @@ function UsersContent({ user }: { user: { isSuperAdmin?: boolean } }) {
         <div className="relative w-full sm:w-64">
           <Search className="absolute right-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
           <Input
+            aria-label="بحث عن مستخدم بالبريد الإلكتروني"
             placeholder="ابحث ببريد إلكتروني كامل..."
             value={searchEmail}
             onChange={(e) => setSearchEmail(e.target.value)}

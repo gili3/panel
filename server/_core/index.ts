@@ -8,6 +8,8 @@ import { registerSessionRoutes } from "./sessionRoutes";
 import { appRouter } from "../routers";
 import { createContext } from "./context";
 import { serveStatic, setupVite } from "./vite";
+import { adminDb } from "../firebase-admin";
+import { logSystemError } from "../error-log-service";
 
 // ✅ إصلاح (Audit المرحلة 7، معالجة الأخطاء والسجلات): لم يكن هناك أي معالج
 // على مستوى العملية (process) لا لـuncaughtException ولا لـunhandledRejection.
@@ -27,11 +29,30 @@ import { serveStatic, setupVite } from "./vite";
 // حرج (كفشل إرسال إشعار) وليس فساداً بحالة العملية بالكامل.
 process.on("uncaughtException", (err) => {
   console.error("[FATAL] استثناء غير مُلتقَط (uncaughtException) — سيُعاد تشغيل السيرفر:", err);
-  process.exit(1);
+  // ✅ إضافة (بطلب الأدمن: كل أخطاء اللوحة والتطبيق تظهر بمكان واحد): نحاول
+  // تسجيله فعلاً بـsystemErrorLogs قبل الخروج — بحد أقصى 3 ثوانٍ (Promise.race)
+  // حتى لا يعلّق خروج العملية نفسه لو تعذّر الاتصال بالشبكة أصلاً؛ توصية
+  // Node.js الرسمية بالخروج فور استقرار حالة عدم اليقين تبقى الأولوية.
+  Promise.race([
+    logSystemError(adminDb, {
+      source: "server",
+      message: err?.message || String(err),
+      stack: err?.stack,
+      severity: "fatal",
+    }),
+    new Promise((resolve) => setTimeout(resolve, 3000)),
+  ]).finally(() => process.exit(1));
 });
 
 process.on("unhandledRejection", (reason) => {
   console.error("[WARN] وعد مرفوض بلا معالجة (unhandledRejection):", reason);
+  const err = reason instanceof Error ? reason : new Error(String(reason));
+  logSystemError(adminDb, {
+    source: "server",
+    message: err.message,
+    stack: err.stack,
+    severity: "error",
+  });
 });
 
 function isPortAvailable(port: number): Promise<boolean> {
@@ -114,6 +135,22 @@ async function startServer() {
     createExpressMiddleware({
       router: appRouter,
       createContext,
+      // ✅ إضافة (بطلب الأدمن): يسجّل أي خطأ tRPC غير متوقَّع (INTERNAL_SERVER_ERROR
+      // فعلياً — استثناء برمجي حقيقي) بـsystemErrorLogs. أخطاء "متوقَّعة" ضمن
+      // منطق العمل (FORBIDDEN لصلاحية ناقصة، BAD_REQUEST لتحقق مدخلات فاشل...)
+      // لا تُسجَّل هنا عمداً — ليست أعطالاً بالنظام، بل استجابات صحيحة تماماً.
+      onError({ error, path }) {
+        if (error.code === "INTERNAL_SERVER_ERROR") {
+          console.error(`[tRPC Error] ${path ?? "?"}:`, error);
+          logSystemError(adminDb, {
+            source: "server",
+            message: error.message,
+            stack: error.stack,
+            route: path,
+            severity: "error",
+          });
+        }
+      },
     })
   );
   // development mode uses Vite, production mode uses static files
@@ -134,6 +171,15 @@ async function startServer() {
   app.use((err: any, req: express.Request, res: express.Response, next: express.NextFunction) => {
     if (res.headersSent) return next(err);
     console.error("[Express Error]", req.method, req.path, err?.message || err);
+    // ✅ إضافة (بطلب الأدمن): نفس مبدأ onError بـtRPC أعلاه، لكن لما هو خارج
+    // tRPC تحديداً (جسم JSON تالف، مسارات /api/session/*، إلخ).
+    logSystemError(adminDb, {
+      source: "server",
+      message: err?.message || String(err),
+      stack: err?.stack,
+      route: req.path,
+      severity: "error",
+    });
     const status = typeof err?.status === "number" ? err.status : 400;
     res.status(status).json({ error: "طلب غير صالح" });
   });

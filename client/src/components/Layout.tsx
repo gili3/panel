@@ -5,6 +5,7 @@ import { Button } from "@/components/ui/button";
 import { LogOut, ShieldCheck } from "lucide-react";
 import NotificationBell from "@/components/NotificationBell";
 import PushPermissionBanner from "@/components/PushPermissionBanner";
+import SystemWarningsCenter from "@/components/SystemWarningsCenter";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -44,6 +45,10 @@ export default function Layout({ children }: LayoutProps) {
               <span>لوحة تحكم Eleven</span>
             </div>
             <div className="flex items-center gap-3">
+              {/* ✅ إضافة: مكان مخصّص واحد لكل تحذيرات النظام (بطلب الأدمن) —
+                  بجانب جرس التنبيهات التجارية مباشرة، لا يظهر إطلاقاً إن لم
+                  يوجد تحذير نشط. راجع lib/systemWarnings.ts. */}
+              {user.role === "admin" && <SystemWarningsCenter />}
               {user.role === "admin" && <NotificationBell />}
               {user.email && (
                 <span className="hidden sm:inline text-sm text-muted-foreground">{user.email}</span>

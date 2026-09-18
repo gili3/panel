@@ -70,6 +70,11 @@ export const functions = getFunctions(firebaseApp);
 
 // App Check (reCAPTCHA v3) — يُفعَّل فقط إن وُجد مفتاح حقيقي بمتغيرات البيئة.
 // بدونه، يُتخطّى بأمان تماماً طالما "Enforce" غير مفعَّل بعد بـFirebase Console.
+// ⚠️ إصلاح (حادثة إنفاذ App Check الحقيقية): كان هذا التحذير يظهر بـconsole.warn
+// فقط في وضع التطوير (import.meta.env.DEV) — أي في بيئة الإنتاج الفعلية، إن
+// نُسي ضبط هذا المتغير، كان يمر بصمت تام بلا أي أثر حتى بسجلات المتصفح، رغم
+// أن هذا بالضبط ما تسبّب بتعطّل الإشعارات المباشرة فور تفعيل Enforce. الآن
+// يظهر التحذير في كل البيئات (لا يعطّل التطبيق، فقط سجل واضح بالـconsole).
 const recaptchaSiteKey = import.meta.env.VITE_RECAPTCHA_SITE_KEY;
 if (recaptchaSiteKey) {
   try {
@@ -80,9 +85,11 @@ if (recaptchaSiteKey) {
   } catch (error) {
     console.error("[App Check] فشلت التهيئة:", error);
   }
-} else if (import.meta.env.DEV) {
+} else {
   console.warn(
-    "[App Check] VITE_RECAPTCHA_SITE_KEY غير مضبوط — لن يعمل Firestore App Check لزوّار الموقع."
+    "[App Check] VITE_RECAPTCHA_SITE_KEY غير مضبوط — لن يعمل Firestore App Check لزوّار الموقع. " +
+    "إن كان 'Enforce' مفعّلاً بـFirebase Console، ستفشل كل طلبات Firestore المباشرة من هذا الموقع " +
+    "(الإشعارات المباشرة تحديداً — راجع components/SystemWarningsCenter.tsx)."
   );
 }
 

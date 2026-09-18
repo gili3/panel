@@ -23,6 +23,7 @@ import { formatNumber } from "@/lib/formatters";
 import { uploadMultipleImages, deleteImageFromStorage, compressImage, uploadImageToStorage } from "@/lib/imageUpload";
 import { db } from "@/lib/firebase";
 import { collection, onSnapshot, orderBy, limit as fsLimit, query as fsQuery } from "firebase/firestore";
+import { reportSystemWarning, clearSystemWarning } from "@/lib/systemWarnings";
 import { useRoute } from "wouter";
 import AdminSidebar from "@/components/AdminSidebar";
 import { ADMIN_SECTIONS } from "@/lib/adminSections";
@@ -111,9 +112,9 @@ function OrderStatusDialog({ orderId, currentStatus, currentPaymentStatus, payme
       </DialogHeader>
       <div className="space-y-4">
         <div>
-          <label className="text-sm font-semibold">حالة الطلب</label>
+          <label htmlFor="order-status" className="text-sm font-semibold">حالة الطلب</label>
           <Select value={status} onValueChange={setStatus}>
-            <SelectTrigger><SelectValue /></SelectTrigger>
+            <SelectTrigger id="order-status"><SelectValue /></SelectTrigger>
             <SelectContent>
               <SelectItem value="pending">قيد الانتظار</SelectItem>
               <SelectItem value="paid">تم الدفع</SelectItem>
@@ -125,7 +126,10 @@ function OrderStatusDialog({ orderId, currentStatus, currentPaymentStatus, payme
         </div>
         {paymentReceipt && (
           <div>
-            <label className="text-sm font-semibold block mb-2">إيصال الدفع</label>
+            {/* ✅ إصلاح (Accessibility): كان <label> هنا بلا أي عنصر تحكم مرتبط
+                به (مجرد رابط عرض)، ما يجعله وسماً دلالياً خاطئاً — <label>
+                مخصص لعناصر النماذج فقط. */}
+            <p className="text-sm font-semibold mb-2">إيصال الدفع</p>
             {/* ✅ إصلاح: بعض الطلبات القديمة (من نسخة سابقة من التطبيق) كانت
                 تخزّن قيمة غير صالحة كرابط (مثل معرّف محلي وليس رابط صورة فعلي)،
                 فيفتح الزر رابطاً خاطئاً مثل https://eleven-sd.com/admin/xxxxx
@@ -143,9 +147,9 @@ function OrderStatusDialog({ orderId, currentStatus, currentPaymentStatus, payme
           </div>
         )}
         <div>
-          <label className="text-sm font-semibold">حالة الدفع</label>
+          <label htmlFor="order-payment-status" className="text-sm font-semibold">حالة الدفع</label>
           <Select value={paymentStatus} onValueChange={setPaymentStatus}>
-            <SelectTrigger><SelectValue /></SelectTrigger>
+            <SelectTrigger id="order-payment-status"><SelectValue /></SelectTrigger>
             <SelectContent>
               <SelectItem value="unpaid">غير مدفوع</SelectItem>
               {/* ✅ إصلاح: قيمة جديدة تعكس الحالة الافتراضية الآن عند رفع إيصال
@@ -375,18 +379,36 @@ export default function AdminDashboard() {
   useEffect(() => {
     if (!user || user.role !== "admin") return;
     const q = fsQuery(collection(db, "orders"), orderBy("createdAt", "desc"), fsLimit(1));
-    const unsubscribe = onSnapshot(q, (snap) => {
-      const latest = snap.docs[0];
-      if (!latest) return;
-      if (latestKnownOrderIdRef.current === null) {
-        latestKnownOrderIdRef.current = latest.id;
-        return;
+    const unsubscribe = onSnapshot(
+      q,
+      (snap) => {
+        const latest = snap.docs[0];
+        if (!latest) return;
+        if (latestKnownOrderIdRef.current === null) {
+          latestKnownOrderIdRef.current = latest.id;
+          return;
+        }
+        if (latest.id !== latestKnownOrderIdRef.current) {
+          latestKnownOrderIdRef.current = latest.id;
+          setHasNewOrders(true);
+        }
+        clearSystemWarning("firestoreLiveConnection");
+      },
+      // ✅ إصلاح (Accessibility/موثوقية — نفس حادثة App Check): كان onSnapshot
+      // هنا بلا معالج خطأ إطلاقاً (ولا حتى console.error) — أي فشل هنا كان
+      // يمر بصمت تام، فلا يعرف الأدمن أن تنبيه "طلب جديد" توقف عن العمل.
+      // ✅ إصلاح إضافي: يُسجَّل الآن بمعرّف "firestoreLiveConnection" المشترك
+      // مع useAdminAlerts.ts/useNotifications.ts — نفس السبب الجذري (App
+      // Check عادةً)، فتحذير واحد موحّد بمركز تحذيرات النظام بدل ثلاثة.
+      (err) => {
+        console.error("[AdminDashboard] new-order watcher failed:", err);
+        reportSystemWarning("firestoreLiveConnection", {
+          title: "تعطّل الاتصال المباشر بالإشعارات",
+          message: "فشل الاتصال الحي بـFirestore (على الأرجح إعداد App Check) — الإشعارات الفورية معطّلة، باقي اللوحة يعمل طبيعياً.",
+          severity: "error",
+        });
       }
-      if (latest.id !== latestKnownOrderIdRef.current) {
-        latestKnownOrderIdRef.current = latest.id;
-        setHasNewOrders(true);
-      }
-    });
+    );
     return () => unsubscribe();
   }, [user]);
   const refreshOrdersNow = () => {
@@ -1060,28 +1082,28 @@ export default function AdminDashboard() {
                     </DialogHeader>
                     <div className="space-y-4">
                       <div>
-                        <label className="text-sm font-semibold">اسم المنتج *</label>
-                        <Input value={productForm.name} onChange={(e) => setProductForm({ ...productForm, name: e.target.value })} />
+                        <label htmlFor="product-name" className="text-sm font-semibold">اسم المنتج *</label>
+                        <Input id="product-name" value={productForm.name} onChange={(e) => setProductForm({ ...productForm, name: e.target.value })} />
                       </div>
                       <div>
-                        <label className="text-sm font-semibold">الوصف *</label>
-                        <Input value={productForm.description} onChange={(e) => setProductForm({ ...productForm, description: e.target.value })} />
+                        <label htmlFor="product-description" className="text-sm font-semibold">الوصف *</label>
+                        <Input id="product-description" value={productForm.description} onChange={(e) => setProductForm({ ...productForm, description: e.target.value })} />
                       </div>
                       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                         <div>
-                          <label className="text-sm font-semibold">السعر الأساسي (ج.س) *</label>
-                          <Input type="number" value={productForm.basePrice} onChange={(e) => setProductForm({ ...productForm, basePrice: e.target.value === "" ? 0 : Number(e.target.value) })} onFocus={(e) => e.target.value === "0" && (e.target.value = "")} />
+                          <label htmlFor="product-base-price" className="text-sm font-semibold">السعر الأساسي (ج.س) *</label>
+                          <Input id="product-base-price" type="number" value={productForm.basePrice} onChange={(e) => setProductForm({ ...productForm, basePrice: e.target.value === "" ? 0 : Number(e.target.value) })} onFocus={(e) => e.target.value === "0" && (e.target.value = "")} />
                         </div>
                         <div>
-                          <label className="text-sm font-semibold">المخزون</label>
-                          <Input type="number" value={productForm.stock} onChange={(e) => setProductForm({ ...productForm, stock: e.target.value === "" ? 0 : Number(e.target.value) })} onFocus={(e) => e.target.value === "0" && (e.target.value = "")} />
+                          <label htmlFor="product-stock" className="text-sm font-semibold">المخزون</label>
+                          <Input id="product-stock" type="number" value={productForm.stock} onChange={(e) => setProductForm({ ...productForm, stock: e.target.value === "" ? 0 : Number(e.target.value) })} onFocus={(e) => e.target.value === "0" && (e.target.value = "")} />
                         </div>
                       </div>
                       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                         <div>
-                          <label className="text-sm font-semibold">التصنيف *</label>
+                          <label htmlFor="product-category" className="text-sm font-semibold">التصنيف *</label>
                           <Select value={productForm.categoryId} onValueChange={(value) => setProductForm({ ...productForm, categoryId: value })}>
-                            <SelectTrigger><SelectValue /></SelectTrigger>
+                            <SelectTrigger id="product-category"><SelectValue /></SelectTrigger>
                             <SelectContent>
                               {categories.map((cat: any) => (
                                 <SelectItem key={cat.id} value={cat.id}>{cat.name}</SelectItem>
@@ -1090,12 +1112,12 @@ export default function AdminDashboard() {
                           </Select>
                         </div>
                         <div>
-                          <label className="text-sm font-semibold">العلامة التجارية</label>
+                          <label htmlFor="product-brand" className="text-sm font-semibold">العلامة التجارية</label>
                           <Select 
                             value={productForm.brandId || "none"} 
                             onValueChange={(value) => setProductForm({ ...productForm, brandId: value === "none" ? "" : value })}
                           >
-                            <SelectTrigger><SelectValue placeholder="اختر العلامة" /></SelectTrigger>
+                            <SelectTrigger id="product-brand"><SelectValue placeholder="اختر العلامة" /></SelectTrigger>
                             <SelectContent>
                               <SelectItem value="none">بدون علامة</SelectItem>
                               {brands.map((brand: any) => (
@@ -1128,9 +1150,9 @@ export default function AdminDashboard() {
                         <div className="border-t pt-4">
                           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                             <div>
-                              <label className="text-sm font-semibold">نوع الخصم</label>
+                              <label htmlFor="product-discount-type" className="text-sm font-semibold">نوع الخصم</label>
                               <Select value={productForm.discountType} onValueChange={(value: 'percentage' | 'fixed') => setProductForm({ ...productForm, discountType: value })}>
-                                <SelectTrigger><SelectValue /></SelectTrigger>
+                                <SelectTrigger id="product-discount-type"><SelectValue /></SelectTrigger>
                                 <SelectContent>
                                   <SelectItem value="percentage">نسبة مئوية (%)</SelectItem>
                                   <SelectItem value="fixed">مبلغ ثابت (ج.س)</SelectItem>
@@ -1138,8 +1160,8 @@ export default function AdminDashboard() {
                               </Select>
                             </div>
                             <div>
-                              <label className="text-sm font-semibold">قيمة الخصم</label>
-                              <Input type="number" min="0" value={productForm.discountValue} onChange={(e) => setProductForm({ ...productForm, discountValue: e.target.value === "" ? 0 : Number(e.target.value) })} />
+                              <label htmlFor="product-discount-value" className="text-sm font-semibold">قيمة الخصم</label>
+                              <Input id="product-discount-value" type="number" min="0" value={productForm.discountValue} onChange={(e) => setProductForm({ ...productForm, discountValue: e.target.value === "" ? 0 : Number(e.target.value) })} />
                             </div>
                           </div>
                           {productForm.discountValue > 0 && (
@@ -1158,7 +1180,10 @@ export default function AdminDashboard() {
                         </div>
                       )}
                       <div className="border-t pt-4">
-                        <label className="text-sm font-semibold block mb-2">صور المنتج</label>
+                        {/* ✅ إصلاح (Accessibility): وسم عنوان وصفي فقط بلا عنصر تحكم
+                            خاص به مباشرة (عنصر التحكم الفعلي — منطقة رفع الملف —
+                            بالـ<label> التالي، المرتبط ضمنياً بصورة صحيحة). */}
+                        <p className="text-sm font-semibold mb-2">صور المنتج</p>
                         <label className={`flex items-center justify-center w-full px-4 py-2 border-2 border-dashed border-border rounded-lg cursor-pointer hover:bg-muted transition-colors ${isUploadingProductImage ? 'opacity-50 cursor-not-allowed' : ''}`}>
                           <div className="flex items-center gap-2">
                             {isUploadingProductImage ? <Loader2 className="w-4 h-4 animate-spin" /> : <Upload className="w-4 h-4" />}
@@ -1402,15 +1427,15 @@ export default function AdminDashboard() {
                     </DialogHeader>
                     <div className="space-y-4">
                       <div>
-                        <label className="text-sm font-semibold">اسم التصنيف *</label>
-                        <Input value={categoryForm.name} onChange={(e) => setCategoryForm({ ...categoryForm, name: e.target.value })} />
+                        <label htmlFor="category-name" className="text-sm font-semibold">اسم التصنيف *</label>
+                        <Input id="category-name" value={categoryForm.name} onChange={(e) => setCategoryForm({ ...categoryForm, name: e.target.value })} />
                       </div>
                       <div>
-                        <label className="text-sm font-semibold">الوصف</label>
-                        <Input value={categoryForm.description} onChange={(e) => setCategoryForm({ ...categoryForm, description: e.target.value })} />
+                        <label htmlFor="category-description" className="text-sm font-semibold">الوصف</label>
+                        <Input id="category-description" value={categoryForm.description} onChange={(e) => setCategoryForm({ ...categoryForm, description: e.target.value })} />
                       </div>
                       <div>
-                        <label className="text-sm font-semibold block mb-2">صورة التصنيف</label>
+                        <p className="text-sm font-semibold mb-2">صورة التصنيف</p>
                         <label className={`flex items-center justify-center w-full px-4 py-2 border-2 border-dashed border-border rounded-lg cursor-pointer hover:bg-muted transition-colors ${isUploadingCategoryImage ? 'opacity-50 cursor-not-allowed' : ''}`}>
                           <div className="flex items-center gap-2">
                             {isUploadingCategoryImage ? <Loader2 className="w-4 h-4 animate-spin" /> : <Upload className="w-4 h-4" />}
@@ -1498,26 +1523,27 @@ export default function AdminDashboard() {
                     </DialogHeader>
                     <div className="space-y-4">
                       <div>
-                        <label className="text-sm font-semibold">العنوان *</label>
-                        <Input value={bannerForm.title} onChange={(e) => setBannerForm({ ...bannerForm, title: e.target.value })} placeholder="مثال: أحدث المنتجات" />
+                        <label htmlFor="banner-title" className="text-sm font-semibold">العنوان *</label>
+                        <Input id="banner-title" value={bannerForm.title} onChange={(e) => setBannerForm({ ...bannerForm, title: e.target.value })} placeholder="مثال: أحدث المنتجات" />
                       </div>
                       <div>
-                        <label className="text-sm font-semibold">الوصف</label>
-                        <Textarea value={bannerForm.description} onChange={(e) => setBannerForm({ ...bannerForm, description: e.target.value })} placeholder="وصف قصير للبانر" rows={3} />
+                        <label htmlFor="banner-description" className="text-sm font-semibold">الوصف</label>
+                        <Textarea id="banner-description" value={bannerForm.description} onChange={(e) => setBannerForm({ ...bannerForm, description: e.target.value })} placeholder="وصف قصير للبانر" rows={3} />
                       </div>
                       <div className="grid grid-cols-2 gap-4">
                         <div>
-                          <label className="text-sm font-semibold">نص الزر</label>
-                          <Input value={bannerForm.cta} onChange={(e) => setBannerForm({ ...bannerForm, cta: e.target.value })} placeholder="تسوق الآن" />
+                          <label htmlFor="banner-cta" className="text-sm font-semibold">نص الزر</label>
+                          <Input id="banner-cta" value={bannerForm.cta} onChange={(e) => setBannerForm({ ...bannerForm, cta: e.target.value })} placeholder="تسوق الآن" />
                         </div>
                         <div>
-                          <label className="text-sm font-semibold">الترتيب</label>
-                          <Input type="number" value={bannerForm.order} onChange={(e) => setBannerForm({ ...bannerForm, order: e.target.value === "" ? 0 : Number(e.target.value) })} onFocus={(e) => e.target.value === "0" && (e.target.value = "")} />
+                          <label htmlFor="banner-order" className="text-sm font-semibold">الترتيب</label>
+                          <Input id="banner-order" type="number" value={bannerForm.order} onChange={(e) => setBannerForm({ ...bannerForm, order: e.target.value === "" ? 0 : Number(e.target.value) })} onFocus={(e) => e.target.value === "0" && (e.target.value = "")} />
                         </div>
                       </div>
                       <div>
-                        <label className="text-sm font-semibold">الرابط عند الضغط (اختياري)</label>
+                        <label htmlFor="banner-link" className="text-sm font-semibold">الرابط عند الضغط (اختياري)</label>
                         <Input
+                          id="banner-link"
                           value={bannerForm.link}
                           onChange={(e) => setBannerForm({ ...bannerForm, link: e.target.value })}
                           placeholder="مثال: /product/xxxxx أو /category/xxxxx أو https://..."
@@ -1529,7 +1555,7 @@ export default function AdminDashboard() {
                         </p>
                       </div>
                       <div>
-                        <label className="text-sm font-semibold block mb-2">صورة البانر</label>
+                        <p className="text-sm font-semibold mb-2">صورة البانر</p>
                         <label className={`flex items-center justify-center w-full px-4 py-2 border-2 border-dashed border-border rounded-lg cursor-pointer hover:bg-muted transition-colors ${isUploadingBannerImage ? 'opacity-50 cursor-not-allowed' : ''}`}>
                           <div className="flex items-center gap-2">
                             {isUploadingBannerImage ? <Loader2 className="w-4 h-4 animate-spin" /> : <ImageIcon className="w-4 h-4" />}
@@ -1540,7 +1566,7 @@ export default function AdminDashboard() {
                         {bannerForm.image && (
                           <div className="mt-2 relative">
                             <img src={bannerForm.image} alt="Banner" className="w-full h-32 object-cover rounded" />
-                            <Button variant="ghost" size="sm" className="absolute top-1 right-1 text-destructive bg-white/80" onClick={() => setBannerForm((prev) => ({ ...prev, image: "" }))}>
+                            <Button variant="ghost" size="sm" className="absolute top-1 right-1 text-destructive bg-white/80" onClick={() => setBannerForm((prev) => ({ ...prev, image: "" }))} aria-label="إزالة صورة البانر">
                               <X className="w-4 h-4" />
                             </Button>
                           </div>
@@ -1621,15 +1647,15 @@ export default function AdminDashboard() {
                     </DialogHeader>
                     <div className="space-y-4">
                       <div>
-                        <label className="text-sm font-semibold">اسم العلامة *</label>
-                        <Input value={brandForm.name} onChange={(e) => setBrandForm({ ...brandForm, name: e.target.value })} />
+                        <label htmlFor="brand-name" className="text-sm font-semibold">اسم العلامة *</label>
+                        <Input id="brand-name" value={brandForm.name} onChange={(e) => setBrandForm({ ...brandForm, name: e.target.value })} />
                       </div>
                       <div>
-                        <label className="text-sm font-semibold">رابط (اختياري)</label>
-                        <Input value={brandForm.link} onChange={(e) => setBrandForm({ ...brandForm, link: e.target.value })} placeholder="https://..." />
+                        <label htmlFor="brand-link" className="text-sm font-semibold">رابط (اختياري)</label>
+                        <Input id="brand-link" value={brandForm.link} onChange={(e) => setBrandForm({ ...brandForm, link: e.target.value })} placeholder="https://..." />
                       </div>
                       <div>
-                        <label className="text-sm font-semibold block mb-2">شعار العلامة *</label>
+                        <p className="text-sm font-semibold mb-2">شعار العلامة *</p>
                         <label className={`flex items-center justify-center w-full px-4 py-2 border-2 border-dashed border-border rounded-lg cursor-pointer hover:bg-muted transition-colors ${isUploadingBrandLogo ? 'opacity-50 cursor-not-allowed' : ''}`}>
                           <div className="flex items-center gap-2">
                             {isUploadingBrandLogo ? <Loader2 className="w-4 h-4 animate-spin" /> : <Upload className="w-4 h-4" />}
@@ -1640,7 +1666,7 @@ export default function AdminDashboard() {
                         {brandForm.logo && (
                           <div className="mt-2 relative">
                             <img src={brandForm.logo} alt={brandForm.name} className="w-32 h-20 object-contain border rounded" />
-                            <Button variant="ghost" size="sm" className="absolute top-1 right-1 text-destructive bg-white/80" onClick={() => setBrandForm(prev => ({ ...prev, logo: "" }))}>
+                            <Button variant="ghost" size="sm" className="absolute top-1 right-1 text-destructive bg-white/80" onClick={() => setBrandForm(prev => ({ ...prev, logo: "" }))} aria-label="إزالة الشعار">
                               <X className="w-4 h-4" />
                             </Button>
                           </div>
@@ -1704,8 +1730,9 @@ export default function AdminDashboard() {
                     </DialogHeader>
                     <div className="space-y-4">
                       <div>
-                        <label className="text-sm font-semibold">كود الخصم *</label>
+                        <label htmlFor="coupon-code" className="text-sm font-semibold">كود الخصم *</label>
                         <Input
+                          id="coupon-code"
                           value={couponForm.code}
                           onChange={(e) => setCouponForm({ ...couponForm, code: e.target.value.toUpperCase() })}
                           placeholder="مثال: SAVE10"
@@ -1715,12 +1742,12 @@ export default function AdminDashboard() {
                       </div>
                       <div className="grid grid-cols-2 gap-3">
                         <div>
-                          <label className="text-sm font-semibold">نوع الخصم</label>
+                          <label htmlFor="coupon-discount-type" className="text-sm font-semibold">نوع الخصم</label>
                           <Select
                             value={couponForm.discountType}
                             onValueChange={(v) => setCouponForm({ ...couponForm, discountType: v as "percentage" | "fixed" })}
                           >
-                            <SelectTrigger><SelectValue /></SelectTrigger>
+                            <SelectTrigger id="coupon-discount-type"><SelectValue /></SelectTrigger>
                             <SelectContent>
                               <SelectItem value="percentage">نسبة مئوية %</SelectItem>
                               <SelectItem value="fixed">مبلغ ثابت ج.س</SelectItem>
@@ -1728,10 +1755,11 @@ export default function AdminDashboard() {
                           </Select>
                         </div>
                         <div>
-                          <label className="text-sm font-semibold">
+                          <label htmlFor="coupon-discount-value" className="text-sm font-semibold">
                             {couponForm.discountType === "percentage" ? "النسبة %" : "المبلغ ج.س"}
                           </label>
                           <Input
+                            id="coupon-discount-value"
                             type="number"
                             value={couponForm.discountValue || ""}
                             onChange={(e) => setCouponForm({ ...couponForm, discountValue: Number(e.target.value) })}
@@ -1740,16 +1768,18 @@ export default function AdminDashboard() {
                       </div>
                       <div className="grid grid-cols-2 gap-3">
                         <div>
-                          <label className="text-sm font-semibold">حد أدنى للطلب (اختياري)</label>
+                          <label htmlFor="coupon-min-order" className="text-sm font-semibold">حد أدنى للطلب (اختياري)</label>
                           <Input
+                            id="coupon-min-order"
                             type="number"
                             value={couponForm.minOrderAmount || ""}
                             onChange={(e) => setCouponForm({ ...couponForm, minOrderAmount: Number(e.target.value) })}
                           />
                         </div>
                         <div>
-                          <label className="text-sm font-semibold">حد الاستخدام (0 = غير محدود)</label>
+                          <label htmlFor="coupon-usage-limit" className="text-sm font-semibold">حد الاستخدام (0 = غير محدود)</label>
                           <Input
+                            id="coupon-usage-limit"
                             type="number"
                             value={couponForm.usageLimit || ""}
                             onChange={(e) => setCouponForm({ ...couponForm, usageLimit: Number(e.target.value) })}
@@ -1757,16 +1787,18 @@ export default function AdminDashboard() {
                         </div>
                       </div>
                       <div>
-                        <label className="text-sm font-semibold">تاريخ الانتهاء (اختياري)</label>
+                        <label htmlFor="coupon-expires-at" className="text-sm font-semibold">تاريخ الانتهاء (اختياري)</label>
                         <Input
+                          id="coupon-expires-at"
                           type="date"
                           value={couponForm.expiresAt}
                           onChange={(e) => setCouponForm({ ...couponForm, expiresAt: e.target.value })}
                         />
                       </div>
                       <div className="flex items-center justify-between border border-border rounded-lg p-3">
-                        <label className="text-sm font-semibold">مُفعّل</label>
+                        <label htmlFor="coupon-is-active" className="text-sm font-semibold">مُفعّل</label>
                         <Switch
+                          id="coupon-is-active"
                           checked={couponForm.isActive}
                           onCheckedChange={(v) => setCouponForm({ ...couponForm, isActive: v })}
                         />
@@ -1836,39 +1868,39 @@ export default function AdminDashboard() {
                 <CardContent className="space-y-4">
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                     <div>
-                      <label className="text-sm font-semibold">اسم المتجر</label>
-                      <Input value={settingsForm.storeName} onChange={(e) => setSettingsForm({ ...settingsForm, storeName: e.target.value })} placeholder="اسم متجرك" />
+                      <label htmlFor="settings-store-name" className="text-sm font-semibold">اسم المتجر</label>
+                      <Input id="settings-store-name" value={settingsForm.storeName} onChange={(e) => setSettingsForm({ ...settingsForm, storeName: e.target.value })} placeholder="اسم متجرك" />
                     </div>
                     <div>
-                      <label className="text-sm font-semibold">رقم الهاتف</label>
-                      <Input value={settingsForm.phone} onChange={(e) => setSettingsForm({ ...settingsForm, phone: e.target.value })} placeholder="+249..." dir="ltr" />
+                      <label htmlFor="settings-phone" className="text-sm font-semibold">رقم الهاتف</label>
+                      <Input id="settings-phone" value={settingsForm.phone} onChange={(e) => setSettingsForm({ ...settingsForm, phone: e.target.value })} placeholder="+249..." dir="ltr" />
                     </div>
                     <div>
-                      <label className="text-sm font-semibold">البريد الإلكتروني</label>
-                      <Input type="email" value={settingsForm.email} onChange={(e) => setSettingsForm({ ...settingsForm, email: e.target.value })} placeholder="info@store.com" dir="ltr" />
+                      <label htmlFor="settings-email" className="text-sm font-semibold">البريد الإلكتروني</label>
+                      <Input id="settings-email" type="email" value={settingsForm.email} onChange={(e) => setSettingsForm({ ...settingsForm, email: e.target.value })} placeholder="info@store.com" dir="ltr" />
                     </div>
                     <div>
-                      <label className="text-sm font-semibold">العنوان</label>
-                      <Input value={settingsForm.address} onChange={(e) => setSettingsForm({ ...settingsForm, address: e.target.value })} placeholder="المدينة، الدولة" />
+                      <label htmlFor="settings-address" className="text-sm font-semibold">العنوان</label>
+                      <Input id="settings-address" value={settingsForm.address} onChange={(e) => setSettingsForm({ ...settingsForm, address: e.target.value })} placeholder="المدينة، الدولة" />
                     </div>
                   </div>
                   <div>
-                    <label className="text-sm font-semibold">وصف المتجر</label>
-                    <Textarea value={settingsForm.storeDescription} onChange={(e) => setSettingsForm({ ...settingsForm, storeDescription: e.target.value })} placeholder="وصف قصير عن متجرك" rows={2} />
+                    <label htmlFor="settings-store-description" className="text-sm font-semibold">وصف المتجر</label>
+                    <Textarea id="settings-store-description" value={settingsForm.storeDescription} onChange={(e) => setSettingsForm({ ...settingsForm, storeDescription: e.target.value })} placeholder="وصف قصير عن متجرك" rows={2} />
                   </div>
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                     <div>
-                      <label className="text-sm font-semibold">رؤية المتجر</label>
-                      <Textarea value={settingsForm.storeVision} onChange={(e) => setSettingsForm({ ...settingsForm, storeVision: e.target.value })} placeholder="رؤية المتجر..." rows={3} />
+                      <label htmlFor="settings-store-vision" className="text-sm font-semibold">رؤية المتجر</label>
+                      <Textarea id="settings-store-vision" value={settingsForm.storeVision} onChange={(e) => setSettingsForm({ ...settingsForm, storeVision: e.target.value })} placeholder="رؤية المتجر..." rows={3} />
                     </div>
                     <div>
-                      <label className="text-sm font-semibold">مهمة المتجر</label>
-                      <Textarea value={settingsForm.storeMission} onChange={(e) => setSettingsForm({ ...settingsForm, storeMission: e.target.value })} placeholder="مهمة المتجر..." rows={3} />
+                      <label htmlFor="settings-store-mission" className="text-sm font-semibold">مهمة المتجر</label>
+                      <Textarea id="settings-store-mission" value={settingsForm.storeMission} onChange={(e) => setSettingsForm({ ...settingsForm, storeMission: e.target.value })} placeholder="مهمة المتجر..." rows={3} />
                     </div>
                   </div>
                   <div>
-                    <label className="text-sm font-semibold">رابط صورة "حول المتجر"</label>
-                    <Input value={settingsForm.storeAboutImage} onChange={(e) => setSettingsForm({ ...settingsForm, storeAboutImage: e.target.value })} placeholder="https://..." dir="ltr" />
+                    <label htmlFor="settings-store-about-image" className="text-sm font-semibold">رابط صورة "حول المتجر"</label>
+                    <Input id="settings-store-about-image" value={settingsForm.storeAboutImage} onChange={(e) => setSettingsForm({ ...settingsForm, storeAboutImage: e.target.value })} placeholder="https://..." dir="ltr" />
                   </div>
                 </CardContent>
               </Card>
@@ -1878,12 +1910,12 @@ export default function AdminDashboard() {
                 <CardContent className="space-y-4">
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                     <div>
-                      <label className="text-sm font-semibold">تكلفة الشحن (ج.س)</label>
-                      <Input type="number" value={settingsForm.shippingCost} onChange={(e) => setSettingsForm({ ...settingsForm, shippingCost: e.target.value === "" ? 0 : Number(e.target.value) })} onFocus={(e) => e.target.value === "0" && (e.target.value = "")} />
+                      <label htmlFor="settings-shipping-cost" className="text-sm font-semibold">تكلفة الشحن (ج.س)</label>
+                      <Input id="settings-shipping-cost" type="number" value={settingsForm.shippingCost} onChange={(e) => setSettingsForm({ ...settingsForm, shippingCost: e.target.value === "" ? 0 : Number(e.target.value) })} onFocus={(e) => e.target.value === "0" && (e.target.value = "")} />
                     </div>
                     <div>
-                      <label className="text-sm font-semibold">حد الشحن المجاني (ج.س)</label>
-                      <Input type="number" value={settingsForm.freeShippingThreshold} onChange={(e) => setSettingsForm({ ...settingsForm, freeShippingThreshold: e.target.value === "" ? 0 : Number(e.target.value) })} onFocus={(e) => e.target.value === "0" && (e.target.value = "")} />
+                      <label htmlFor="settings-free-shipping-threshold" className="text-sm font-semibold">حد الشحن المجاني (ج.س)</label>
+                      <Input id="settings-free-shipping-threshold" type="number" value={settingsForm.freeShippingThreshold} onChange={(e) => setSettingsForm({ ...settingsForm, freeShippingThreshold: e.target.value === "" ? 0 : Number(e.target.value) })} onFocus={(e) => e.target.value === "0" && (e.target.value = "")} />
                       <p className="text-xs text-muted-foreground mt-1">الطلبات التي تتجاوز هذا المبلغ تحصل على شحن مجاني</p>
                     </div>
                   </div>
@@ -1895,16 +1927,16 @@ export default function AdminDashboard() {
                 <CardContent className="space-y-4">
                   <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                     <div>
-                      <label className="text-sm font-semibold">اسم البنك</label>
-                      <Input value={settingsForm.bankName} onChange={(e) => setSettingsForm({ ...settingsForm, bankName: e.target.value })} placeholder="بنك الخرطوم" />
+                      <label htmlFor="settings-bank-name" className="text-sm font-semibold">اسم البنك</label>
+                      <Input id="settings-bank-name" value={settingsForm.bankName} onChange={(e) => setSettingsForm({ ...settingsForm, bankName: e.target.value })} placeholder="بنك الخرطوم" />
                     </div>
                     <div>
-                      <label className="text-sm font-semibold">اسم صاحب الحساب</label>
-                      <Input value={settingsForm.bankAccountName} onChange={(e) => setSettingsForm({ ...settingsForm, bankAccountName: e.target.value })} placeholder="اسم الشركة أو الشخص" />
+                      <label htmlFor="settings-bank-account-name" className="text-sm font-semibold">اسم صاحب الحساب</label>
+                      <Input id="settings-bank-account-name" value={settingsForm.bankAccountName} onChange={(e) => setSettingsForm({ ...settingsForm, bankAccountName: e.target.value })} placeholder="اسم الشركة أو الشخص" />
                     </div>
                     <div>
-                      <label className="text-sm font-semibold">رقم الحساب</label>
-                      <Input value={settingsForm.bankAccountNumber} onChange={(e) => setSettingsForm({ ...settingsForm, bankAccountNumber: e.target.value })} placeholder="1234567890" dir="ltr" />
+                      <label htmlFor="settings-bank-account-number" className="text-sm font-semibold">رقم الحساب</label>
+                      <Input id="settings-bank-account-number" value={settingsForm.bankAccountNumber} onChange={(e) => setSettingsForm({ ...settingsForm, bankAccountNumber: e.target.value })} placeholder="1234567890" dir="ltr" />
                     </div>
                   </div>
                 </CardContent>
@@ -1915,20 +1947,20 @@ export default function AdminDashboard() {
                 <CardContent className="space-y-4">
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                     <div>
-                      <label className="text-sm font-semibold">واتساب (رقم الهاتف)</label>
-                      <Input value={settingsForm.whatsapp} onChange={(e) => setSettingsForm({ ...settingsForm, whatsapp: e.target.value })} placeholder="+249123456789" dir="ltr" />
+                      <label htmlFor="settings-whatsapp" className="text-sm font-semibold">واتساب (رقم الهاتف)</label>
+                      <Input id="settings-whatsapp" value={settingsForm.whatsapp} onChange={(e) => setSettingsForm({ ...settingsForm, whatsapp: e.target.value })} placeholder="+249123456789" dir="ltr" />
                     </div>
                     <div>
-                      <label className="text-sm font-semibold">فيسبوك (رابط الصفحة)</label>
-                      <Input value={settingsForm.facebook} onChange={(e) => setSettingsForm({ ...settingsForm, facebook: e.target.value })} placeholder="https://facebook.com/..." dir="ltr" />
+                      <label htmlFor="settings-facebook" className="text-sm font-semibold">فيسبوك (رابط الصفحة)</label>
+                      <Input id="settings-facebook" value={settingsForm.facebook} onChange={(e) => setSettingsForm({ ...settingsForm, facebook: e.target.value })} placeholder="https://facebook.com/..." dir="ltr" />
                     </div>
                     <div>
-                      <label className="text-sm font-semibold">إنستغرام (رابط الحساب)</label>
-                      <Input value={settingsForm.instagram} onChange={(e) => setSettingsForm({ ...settingsForm, instagram: e.target.value })} placeholder="https://instagram.com/..." dir="ltr" />
+                      <label htmlFor="settings-instagram" className="text-sm font-semibold">إنستغرام (رابط الحساب)</label>
+                      <Input id="settings-instagram" value={settingsForm.instagram} onChange={(e) => setSettingsForm({ ...settingsForm, instagram: e.target.value })} placeholder="https://instagram.com/..." dir="ltr" />
                     </div>
                     <div>
-                      <label className="text-sm font-semibold">تويتر / X (رابط الحساب)</label>
-                      <Input value={settingsForm.twitter} onChange={(e) => setSettingsForm({ ...settingsForm, twitter: e.target.value })} placeholder="https://x.com/..." dir="ltr" />
+                      <label htmlFor="settings-twitter" className="text-sm font-semibold">تويتر / X (رابط الحساب)</label>
+                      <Input id="settings-twitter" value={settingsForm.twitter} onChange={(e) => setSettingsForm({ ...settingsForm, twitter: e.target.value })} placeholder="https://x.com/..." dir="ltr" />
                     </div>
                   </div>
                 </CardContent>
@@ -1937,26 +1969,31 @@ export default function AdminDashboard() {
               <Card>
                 <CardHeader><CardTitle className="flex items-center gap-2"><Star className="w-5 h-5" /> مميزات المتجر (الصفحة الرئيسية)</CardTitle></CardHeader>
                 <CardContent className="space-y-6">
+                  {/* ✅ إصلاح (Accessibility): كل حقلَي عنوان/وصف هنا كانا بلا أي تسمية
+                      نصية (لا label ولا aria-label)، فيعتمدان فقط على placeholder
+                      الذي يختفي فور الكتابة ولا يُعامَل بثبات كاسم accessible في
+                      كل قارئات الشاشة — أضيف aria-label صريح لكل حقل يتضمّن رقم
+                      الميزة حتى يُميَّز عن باقي الحقول المتطابقة شكلياً. */}
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                     <div className="space-y-2 border p-3 rounded-lg">
                       <h4 className="font-bold text-primary">الميزة 1</h4>
-                      <Input value={settingsForm.feature1Title} onChange={(e) => setSettingsForm({ ...settingsForm, feature1Title: e.target.value })} placeholder="العنوان (مثلاً: شحن سريع)" />
-                      <Input value={settingsForm.feature1Desc} onChange={(e) => setSettingsForm({ ...settingsForm, feature1Desc: e.target.value })} placeholder="الوصف" />
+                      <Input aria-label="عنوان الميزة 1" value={settingsForm.feature1Title} onChange={(e) => setSettingsForm({ ...settingsForm, feature1Title: e.target.value })} placeholder="العنوان (مثلاً: شحن سريع)" />
+                      <Input aria-label="وصف الميزة 1" value={settingsForm.feature1Desc} onChange={(e) => setSettingsForm({ ...settingsForm, feature1Desc: e.target.value })} placeholder="الوصف" />
                     </div>
                     <div className="space-y-2 border p-3 rounded-lg">
                       <h4 className="font-bold text-primary">الميزة 2</h4>
-                      <Input value={settingsForm.feature2Title} onChange={(e) => setSettingsForm({ ...settingsForm, feature2Title: e.target.value })} placeholder="العنوان (مثلاً: شراء آمن)" />
-                      <Input value={settingsForm.feature2Desc} onChange={(e) => setSettingsForm({ ...settingsForm, feature2Desc: e.target.value })} placeholder="الوصف" />
+                      <Input aria-label="عنوان الميزة 2" value={settingsForm.feature2Title} onChange={(e) => setSettingsForm({ ...settingsForm, feature2Title: e.target.value })} placeholder="العنوان (مثلاً: شراء آمن)" />
+                      <Input aria-label="وصف الميزة 2" value={settingsForm.feature2Desc} onChange={(e) => setSettingsForm({ ...settingsForm, feature2Desc: e.target.value })} placeholder="الوصف" />
                     </div>
                     <div className="space-y-2 border p-3 rounded-lg">
                       <h4 className="font-bold text-primary">الميزة 3</h4>
-                      <Input value={settingsForm.feature3Title} onChange={(e) => setSettingsForm({ ...settingsForm, feature3Title: e.target.value })} placeholder="العنوان (مثلاً: خدمة 24/7)" />
-                      <Input value={settingsForm.feature3Desc} onChange={(e) => setSettingsForm({ ...settingsForm, feature3Desc: e.target.value })} placeholder="الوصف" />
+                      <Input aria-label="عنوان الميزة 3" value={settingsForm.feature3Title} onChange={(e) => setSettingsForm({ ...settingsForm, feature3Title: e.target.value })} placeholder="العنوان (مثلاً: خدمة 24/7)" />
+                      <Input aria-label="وصف الميزة 3" value={settingsForm.feature3Desc} onChange={(e) => setSettingsForm({ ...settingsForm, feature3Desc: e.target.value })} placeholder="الوصف" />
                     </div>
                     <div className="space-y-2 border p-3 rounded-lg">
                       <h4 className="font-bold text-primary">الميزة 4</h4>
-                      <Input value={settingsForm.feature4Title} onChange={(e) => setSettingsForm({ ...settingsForm, feature4Title: e.target.value })} placeholder="العنوان (مثلاً: جودة عالية)" />
-                      <Input value={settingsForm.feature4Desc} onChange={(e) => setSettingsForm({ ...settingsForm, feature4Desc: e.target.value })} placeholder="الوصف" />
+                      <Input aria-label="عنوان الميزة 4" value={settingsForm.feature4Title} onChange={(e) => setSettingsForm({ ...settingsForm, feature4Title: e.target.value })} placeholder="العنوان (مثلاً: جودة عالية)" />
+                      <Input aria-label="وصف الميزة 4" value={settingsForm.feature4Desc} onChange={(e) => setSettingsForm({ ...settingsForm, feature4Desc: e.target.value })} placeholder="الوصف" />
                     </div>
                   </div>
                 </CardContent>
@@ -1966,8 +2003,8 @@ export default function AdminDashboard() {
                 <CardHeader><CardTitle className="flex items-center gap-2"><Package className="w-5 h-5" /> إعدادات المخزون</CardTitle></CardHeader>
                 <CardContent>
                   <div className="max-w-xs">
-                    <label className="text-sm font-semibold">حد المخزون المنخفض</label>
-                    <Input type="number" value={settingsForm.lowStockThreshold} onChange={(e) => setSettingsForm({ ...settingsForm, lowStockThreshold: e.target.value === "" ? 0 : Number(e.target.value) })} onFocus={(e) => e.target.value === "0" && (e.target.value = "")} min={1} />
+                    <label htmlFor="settings-low-stock-threshold" className="text-sm font-semibold">حد المخزون المنخفض</label>
+                    <Input id="settings-low-stock-threshold" type="number" value={settingsForm.lowStockThreshold} onChange={(e) => setSettingsForm({ ...settingsForm, lowStockThreshold: e.target.value === "" ? 0 : Number(e.target.value) })} onFocus={(e) => e.target.value === "0" && (e.target.value = "")} min={1} />
                     <p className="text-xs text-muted-foreground mt-1">المنتجات التي يساوي مخزونها هذا الرقم أو أقل تُعتبر منخفضة المخزون</p>
                   </div>
                 </CardContent>

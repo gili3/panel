@@ -8,6 +8,12 @@ import "./index.css";
 import "react-phone-number-input/style.css"; // <-- أضف هذا السطر
 import { AXIOS_TIMEOUT_MS } from "@shared/const";
 import { auth } from "@/lib/firebase";
+import { installGlobalErrorReporting } from "@/lib/errorReporter";
+
+// ✅ إضافة (بطلب الأدمن: كل أخطاء اللوحة تظهر بمكان واحد بلوحة التحكم) —
+// يُركَّب أول شيء عند إقلاع التطبيق، قبل أي render، حتى يُلتقَط حتى خطأ
+// إقلاع مبكر جداً (مثال: فشل تهيئة Firebase نفسها).
+installGlobalErrorReporting();
 
 // ✅ إصلاح أداء: كان QueryClient بدون أي إعدادات افتراضية — أي staleTime=0
 // يعني كل تنقّل بين الصفحات (وليس فقط تحديث المتصفح الكامل) قد يعيد جلب

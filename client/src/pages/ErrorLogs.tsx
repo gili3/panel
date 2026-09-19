@@ -11,7 +11,7 @@ import {
 } from "@/components/ui/alert-dialog";
 import {
   Loader2, ShieldAlert, Trash2, CheckCircle2, RotateCcw,
-  LayoutDashboard, Server, Smartphone, ChevronDown,
+  LayoutDashboard, Server, Smartphone, ChevronDown, AlertTriangle,
 } from "lucide-react";
 
 type ErrorLogRow = {
@@ -59,29 +59,33 @@ function ErrorLogsContent() {
   const [includeResolved, setIncludeResolved] = useState(false);
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<ErrorLogRow | null>(null);
-  const [allItems, setAllItems] = useState<ErrorLogRow[] | null>(null);
-  const [nextCursor, setNextCursor] = useState<string | null>(null);
+  // صفحات "تحميل المزيد" فقط — الصفحة الأولى تُقرأ مباشرة من data (مصدر واحد
+  // للحقيقة). extraCursor: undefined = لم تُحمَّل صفحات إضافية بعد.
+  const [extraItems, setExtraItems] = useState<ErrorLogRow[]>([]);
+  const [extraCursor, setExtraCursor] = useState<string | null | undefined>(undefined);
   const [isFetchingMore, setIsFetchingMore] = useState(false);
 
-  const { data, isLoading: isLoadingFirstPage } = trpc.errorLog.list.useQuery({
+  const { data, isLoading, isError, error, refetch, isRefetching } = trpc.errorLog.list.useQuery({
     source: sourceFilter === "all" ? undefined : sourceFilter,
     includeResolved,
     cursor: null,
   });
 
-  // ✅ إعادة الجلب من الصفحة الأولى فقط عند تغيير الفلاتر — نفس نمط
-  // ContactMessages.tsx (allItems محليّة متراكمة، تُعاد تهيئتها فقط عند
-  // تغيّر مصدر البيانات نفسه، لا عند كل render).
+  // ✅ إصلاح: النسخة السابقة كانت تنسخ data لحالة محلية allItems عبر useEffect
+  // وتعرض "لا توجد أخطاء — كل شيء يعمل بسلام 🎉" كلما كانت allItems فارغة —
+  // أي أثناء إعادة الجلب بعد "معالَج/حذف"، وكذلك **عند فشل الاستعلام نفسه**
+  // (فهرس Firestore غير منشور، انتهاء الجلسة...) فيظن الأدمن أن النظام سليم
+  // بينما السجل نفسه معطّل. الآن حالة الخطأ تظهر صراحةً مع زر إعادة المحاولة،
+  // وتغيير الفلتر لا يُبقي عناصر الفلتر السابق ولا مؤشر صفحته على الشاشة.
   useEffect(() => {
-    if (data) {
-      setAllItems(data.items);
-      setNextCursor(data.nextCursor);
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [data]);
+    setExtraItems([]);
+    setExtraCursor(undefined);
+  }, [data, sourceFilter, includeResolved]);
+
+  const items = [...(data?.items ?? []), ...extraItems];
+  const nextCursor = extraCursor !== undefined ? extraCursor : (data?.nextCursor ?? null);
 
   const resetAndRefetch = () => {
-    setAllItems(null);
     utils.errorLog.list.invalidate();
   };
 
@@ -94,8 +98,8 @@ function ErrorLogsContent() {
         includeResolved,
         cursor: nextCursor,
       });
-      setAllItems((prev) => [...(prev ?? []), ...page.items]);
-      setNextCursor(page.nextCursor);
+      setExtraItems((prev) => [...prev, ...page.items]);
+      setExtraCursor(page.nextCursor);
     } catch (err: any) {
       toast.error(err?.message || "تعذّر تحميل المزيد");
     } finally {
@@ -115,8 +119,6 @@ function ErrorLogsContent() {
     },
     onError: (err) => toast.error(err.message),
   });
-
-  const items = allItems ?? [];
 
   return (
     <div className="space-y-4">
@@ -146,9 +148,20 @@ function ErrorLogsContent() {
           </div>
         </CardHeader>
         <CardContent>
-          {isLoadingFirstPage && allItems === null ? (
+          {isLoading ? (
             <div className="flex justify-center py-12">
               <Loader2 className="w-6 h-6 animate-spin text-muted-foreground" />
+            </div>
+          ) : isError ? (
+            <div className="flex flex-col items-center gap-3 py-12 text-center">
+              <AlertTriangle className="w-6 h-6 text-destructive" />
+              <p className="text-sm font-medium">تعذّر تحميل سجل الأخطاء</p>
+              <p className="text-xs text-muted-foreground max-w-md break-words" dir="ltr">
+                {error?.message}
+              </p>
+              <Button size="sm" variant="outline" disabled={isRefetching} onClick={() => refetch()}>
+                {isRefetching ? <Loader2 className="w-4 h-4 animate-spin" /> : "إعادة المحاولة"}
+              </Button>
             </div>
           ) : items.length === 0 ? (
             <p className="text-center text-sm text-muted-foreground py-12">

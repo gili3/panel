@@ -187,7 +187,13 @@ service cloud.firestore {
         // تنتهي صلاحية الجلسة القديمة).
         (!("adminPermissions" in request.resource.data) || unchanged("adminPermissions")) &&
         (!("disabled" in request.resource.data) || unchanged("disabled")) &&
-        !("notifUnreadCount" in request.resource.data) &&
+        // ✅ إصلاح: كان الشرط السابق !("notifUnreadCount" in request.resource.data)
+        // — لكن request.resource.data في التحديث هو المستند كاملاً بعد الدمج (يشمل
+        // الحقول القديمة)، وnotifUnreadCount يكتبه Cloud Function على كل مستخدم
+        // لديه إشعارات. النتيجة: أي كتابة من العميل على users/{uid} (تسجيل الدخول
+        // بجوجل، تسجيل توكن FCM، تسجيل الخروج، تعديل الملف الشخصي) كانت تُرفض
+        // PERMISSION_DENIED لكل من لديه عدّاد. الصحيح: منع *تغيير* الحقل فقط.
+        !request.resource.data.diff(resource.data).affectedKeys().hasAny(["notifUnreadCount"]) &&
         (!("fcmTokens" in request.resource.data) ||
           (request.resource.data.fcmTokens is list &&
            request.resource.data.fcmTokens.size() <= 20 &&

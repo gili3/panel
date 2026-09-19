@@ -9,6 +9,7 @@ export { onUserCreated } from "./triggers/userCreatedTrigger";
 export {
   requestAccountDeletionOtp,
   confirmAccountDeletion,
+  notifyNewSignIn,
 } from "./callables/authEmails";
 export {
   sendEmailVerificationOtp,

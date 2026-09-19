@@ -3,7 +3,7 @@ import * as admin from "firebase-admin";
 import { db } from "../lib/admin";
 import { sendMail } from "../lib/mailer";
 import { generateOtp, hashOtp } from "../lib/otp";
-import { deletionOtpTemplate } from "../lib/emailTemplates";
+import { deletionOtpTemplate, newSignInTemplate } from "../lib/emailTemplates";
 
 /**
  * ELEVEN STORE — حذف الحساب برمز تأكيد (OTP)
@@ -101,4 +101,40 @@ export const confirmAccountDeletion = functionsV1.https.onCall(async (data, cont
   await ref.delete();
   await admin.auth().deleteUser(uid);
   return { deleted: true };
+});
+
+// ─── تنبيه تسجيل دخول جديد ───────────────────────────────────────────────
+/**
+ * يُستدعى من العميل (Login.tsx) فور نجاح تسجيل الدخول (بريد/كلمة مرور أو
+ * Google) — بلا انتظار (fire-and-forget) حتى لا يؤخّر توجيه المستخدم.
+ * uid يُشتق من جلسة المصادقة context.auth.uid فقط (لا يمكن لأي عميل طلب
+ * إرسال هذا التنبيه لبريد مستخدم آخر). "method" نص وصفي فقط لعرضه بالرسالة
+ * (Google / البريد الإلكتروني)، لا قيمة أمنية له، فلا حاجة للتحقق الصارم منه.
+ * فشل الإرسال هنا لا يجب أن يُفشل تسجيل الدخول نفسه — لذا هذه الدالة لا
+ * ترمي خطأ للعميل عند فشل sendMail، فقط تسجّله وتُعيد sent:false.
+ */
+export const notifyNewSignIn = functionsV1.https.onCall(async (data, context) => {
+  if (!context.auth) {
+    throw new functionsV1.https.HttpsError("unauthenticated", "يجب تسجيل الدخول أولاً");
+  }
+  const uid = context.auth.uid;
+  const method = typeof data?.method === "string" && data.method.trim() ? data.method.trim() : "غير معروف";
+
+  try {
+    const user = await admin.auth().getUser(uid);
+    if (!user.email) return { sent: false };
+
+    const dateTime = new Intl.DateTimeFormat("ar-SA", {
+      dateStyle: "long",
+      timeStyle: "short",
+      timeZone: "Asia/Riyadh",
+    }).format(new Date());
+
+    const { subject, html } = newSignInTemplate({ method, dateTime });
+    await sendMail({ to: user.email, subject, html });
+    return { sent: true };
+  } catch (error) {
+    console.error("[notifyNewSignIn] فشل إرسال تنبيه تسجيل الدخول:", error);
+    return { sent: false };
+  }
 });

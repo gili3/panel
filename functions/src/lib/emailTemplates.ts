@@ -165,6 +165,25 @@ export function passwordChangedTemplate(): EmailContent {
   };
 }
 
+export function newSignInTemplate(opts: {
+  method: string;
+  dateTime: string; // نص جاهز بتوقيت السعودية، مُنسَّق مسبقاً من المستدعي
+}): EmailContent {
+  return {
+    subject: "تسجيل دخول جديد إلى حسابك — Eleven Store",
+    html: renderEmailLayout({
+      title: "تم تسجيل الدخول إلى حسابك في Eleven Store",
+      bodyHtml:
+        `<p>تم تسجيل الدخول إلى حسابك باستخدام <strong>${opts.method}</strong>.</p>` +
+        `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin:16px 0; font-size:14px;">` +
+        `<tr><td style="padding:4px 0; color:#64748b;">التاريخ والوقت</td><td style="padding:4px 0; text-align:left; color:#0f172a; font-weight:600;">${opts.dateTime}</td></tr>` +
+        `<tr><td style="padding:4px 0; color:#64748b;">طريقة تسجيل الدخول</td><td style="padding:4px 0; text-align:left; color:#0f172a; font-weight:600;">${opts.method}</td></tr>` +
+        `</table>` +
+        `<p>إذا لم تكن أنت من قام بتسجيل الدخول، يُرجى مراجعة أمان حسابك واتخاذ الإجراءات اللازمة فوراً.</p>`,
+    }),
+  };
+}
+
 export function accountDeletedTemplate(): EmailContent {
   return {
     subject: "تم حذف حسابك — Eleven Store",

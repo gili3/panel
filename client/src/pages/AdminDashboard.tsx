@@ -278,6 +278,7 @@ export default function AdminDashboard() {
     phone: "",
     email: "",
     address: "",
+    websiteUrl: "",
     shippingCost: 30,
     freeShippingThreshold: 500,
     bankName: "",
@@ -427,6 +428,7 @@ export default function AdminDashboard() {
         phone: s.phone || "",
         email: s.email || "",
         address: s.address || "",
+        websiteUrl: s.websiteUrl || "",
         shippingCost: Number(s.shippingCost) || 30,
         freeShippingThreshold: Number(s.freeShippingThreshold) || 500,
         bankName: s.bankName || "",
@@ -1882,6 +1884,13 @@ export default function AdminDashboard() {
                     <div>
                       <label htmlFor="settings-address" className="text-sm font-semibold">العنوان</label>
                       <Input id="settings-address" value={settingsForm.address} onChange={(e) => setSettingsForm({ ...settingsForm, address: e.target.value })} placeholder="المدينة، الدولة" />
+                    </div>
+                    <div>
+                      <label htmlFor="settings-website-url" className="text-sm font-semibold">رابط الموقع الإلكتروني</label>
+                      <Input id="settings-website-url" value={settingsForm.websiteUrl} onChange={(e) => setSettingsForm({ ...settingsForm, websiteUrl: e.target.value })} placeholder="https://eleven-sd.com" dir="ltr" />
+                      <p className="text-xs text-muted-foreground mt-1">
+                        بدون شرطة "/" في الآخر — يُستخدم لبناء روابط سياسة الخصوصية وشروط الخدمة داخل تطبيق الأندرويد (ستفتح {"{الرابط}"}/privacy-policy و {"{الرابط}"}/terms).
+                      </p>
                     </div>
                   </div>
                   <div>

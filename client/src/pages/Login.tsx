@@ -35,6 +35,9 @@ export default function Login() {
       // حتى لا يصل المستخدم للصفحة التالية قبل أن تكون الطلبات المحمية جاهزة.
       const idToken = await cred.user.getIdToken();
       await establishServerSession(idToken);
+      // ✅ تنبيه أمني بالبريد — لا ننتظره (fire-and-forget) حتى لا يؤخّر
+      // توجيه المستخدم، وفشله لا يجب أن يمنع تسجيل الدخول الناجح فعلياً.
+      httpsCallable(functions, "notifyNewSignIn")({ method: "البريد الإلكتروني وكلمة المرور" }).catch(() => {});
       toast.success("تم تسجيل الدخول بنجاح");
       setLocation("/");
     } catch (err: any) {
@@ -64,6 +67,8 @@ export default function Login() {
       const cred = await signInWithPopup(auth, provider);
       const idToken = await cred.user.getIdToken();
       await establishServerSession(idToken);
+      // ✅ تنبيه أمني بالبريد — نفس منطق نموذج البريد/كلمة المرور أعلاه.
+      httpsCallable(functions, "notifyNewSignIn")({ method: "Google" }).catch(() => {});
       toast.success("تم تسجيل الدخول بنجاح");
       setLocation("/");
     } catch (err: any) {

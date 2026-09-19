@@ -977,6 +977,7 @@ export const firestoreRouter = router({
       phone: z.string().optional(),
       email: z.string().optional(),
       address: z.string().optional(),
+      websiteUrl: z.string().optional(),
       shippingCost: z.number().optional(),
       freeShippingThreshold: z.number().optional(),
       bankName: z.string().optional(),

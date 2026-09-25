@@ -992,6 +992,24 @@ export const firestoreRouter = router({
       storeVision: z.string().optional(),
       storeMission: z.string().optional(),
       storeAboutImage: z.string().optional(),
+      // ✅ إصلاح: هذه الحقول كانت موجودة في نموذج لوحة التحكم (Settings tab)
+      // وتُملأ فعلياً من الأدمن، لكنها لم تكن معرّفة هنا — zod كان يُسقطها
+      // بصمت عند الحفظ (رسالة "تم الحفظ" تظهر رغم ضياع القيم). أُضيفت الآن
+      // فعلياً حتى تُحفظ وتُقرأ من الموقع/التطبيق.
+      feature1Title: z.string().optional(),
+      feature1Desc: z.string().optional(),
+      feature2Title: z.string().optional(),
+      feature2Desc: z.string().optional(),
+      feature3Title: z.string().optional(),
+      feature3Desc: z.string().optional(),
+      feature4Title: z.string().optional(),
+      feature4Desc: z.string().optional(),
+      // ✅ ألوان التطبيق القابلة للتخصيص من لوحة التحكم (تطبيق الأندرويد يقرأها
+      // ويطبّقها ديناميكياً على MaterialTheme — راجع Theme.kt/ElevenStoreTheme).
+      // قيمة فارغة "" تعني: استخدم اللون الافتراضي للتصميم (لا تخصيص).
+      primaryColor: z.string().regex(/^#[0-9A-Fa-f]{6}$/).or(z.literal("")).optional(),
+      secondaryColor: z.string().regex(/^#[0-9A-Fa-f]{6}$/).or(z.literal("")).optional(),
+      backgroundColor: z.string().regex(/^#[0-9A-Fa-f]{6}$/).or(z.literal("")).optional(),
     }))
     .mutation(async ({ input, ctx }) => {
       await adminDb.collection("settings").doc("store").set({

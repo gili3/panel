@@ -2,7 +2,7 @@
 import Layout from "@/components/Layout";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Tabs, TabsContent } from "@/components/ui/tabs";
+import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
@@ -13,7 +13,7 @@ import { useAuth } from "@/_core/hooks/useAuth";
 import {
   BarChart3, ShoppingBag, DollarSign, Plus, Edit2, Trash2, Loader2, AlertCircle,
   X, Upload, Users, Package, TrendingUp, Clock, CheckCircle, ChevronDown, ChevronUp,
-  Image as ImageIcon, Settings, ShoppingCart, Star, Tag
+  Image as ImageIcon, Settings, ShoppingCart, Star, Tag, Palette, RotateCcw
 } from "lucide-react";
 import { useState, useEffect, useRef } from "react";
 import { trpc } from "@/lib/trpc";
@@ -21,6 +21,7 @@ import { toast } from "sonner";
 import { getOrderStatusConfig } from "@/lib/orderStatus";
 import { formatNumber } from "@/lib/formatters";
 import { uploadMultipleImages, deleteImageFromStorage, compressImage, uploadImageToStorage } from "@/lib/imageUpload";
+import { PRESET_THEMES, getContrastRatio, getReadableTextColor } from "@/lib/themePresets";
 import { db } from "@/lib/firebase";
 import { collection, onSnapshot, orderBy, limit as fsLimit, query as fsQuery } from "firebase/firestore";
 import { reportSystemWarning, clearSystemWarning } from "@/lib/systemWarnings";
@@ -212,6 +213,55 @@ function StatCard({
   );
 }
 
+// ✅ حقل لون واحد لقسم "المظهر" في الإعدادات: منتقي لون + إدخال Hex يدوي +
+// معاينة مباشرة + زر استعادة الافتراضي. يُستخدم 3 مرات (رئيسي/ثانوي/خلفية)
+// بدل تكرار نفس الترميز — قيمة "" تعني "بدون تخصيص، استخدم لون التصميم".
+function SettingsColorField({
+  label, hint, value, defaultValue, onChange,
+}: {
+  label: string;
+  hint?: string;
+  value: string;
+  defaultValue: string;
+  onChange: (v: string) => void;
+}) {
+  const effective = /^#[0-9A-Fa-f]{6}$/.test(value) ? value : defaultValue;
+  return (
+    <div className="space-y-1.5">
+      <div className="flex items-center justify-between">
+        <label className="text-sm font-semibold">{label}</label>
+        {value !== "" && (
+          <button
+            type="button"
+            onClick={() => onChange("")}
+            className="text-xs text-muted-foreground hover:text-foreground flex items-center gap-1"
+          >
+            <RotateCcw className="w-3 h-3" /> استعادة الافتراضي
+          </button>
+        )}
+      </div>
+      <div className="flex items-center gap-2">
+        <input
+          type="color"
+          aria-label={label}
+          value={effective}
+          onChange={(e) => onChange(e.target.value)}
+          className="w-10 h-10 rounded-md border border-input cursor-pointer shrink-0 p-0 bg-transparent"
+        />
+        <Input
+          value={value}
+          onChange={(e) => onChange(e.target.value)}
+          placeholder={defaultValue}
+          dir="ltr"
+          className="font-mono"
+          maxLength={7}
+        />
+      </div>
+      {hint && <p className="text-xs text-muted-foreground">{hint}</p>}
+    </div>
+  );
+}
+
 export default function AdminDashboard() {
   const { user, loading, roleLoading, logout } = useAuth();
 
@@ -297,7 +347,13 @@ export default function AdminDashboard() {
     feature2Title: "", feature2Desc: "",
     feature3Title: "", feature3Desc: "",
     feature4Title: "", feature4Desc: "",
+    // "" = استخدام لون التصميم الافتراضي (بدون تخصيص)
+    primaryColor: "",
+    secondaryColor: "",
+    backgroundColor: "",
   });
+  // تبويب فرعي داخل صفحة الإعدادات — لتقسيمها إلى أقسام مرتبة بدل نموذج طويل واحد
+  const [settingsSubTab, setSettingsSubTab] = useState("general");
 
   // Data fetching
   const { data: storeSettings } = trpc.firestore.getStoreSettings.useQuery();
@@ -451,6 +507,9 @@ export default function AdminDashboard() {
         feature3Desc: s.feature3Desc || "",
         feature4Title: s.feature4Title || "",
         feature4Desc: s.feature4Desc || "",
+        primaryColor: s.primaryColor || "",
+        secondaryColor: s.secondaryColor || "",
+        backgroundColor: s.backgroundColor || "",
       });
     }
   }, [storeSettings]);
@@ -1862,162 +1921,308 @@ export default function AdminDashboard() {
             </Card>
           </TabsContent>
 
-          {/* Settings Tab */}
+          {/* Settings Tab — مقسّمة إلى تبويبات فرعية مرتبة بدل نموذج طويل واحد */}
           <TabsContent value="settings" className="mt-6">
             <div className="space-y-6">
-              <Card>
-                <CardHeader><CardTitle className="flex items-center gap-2"><Settings className="w-5 h-5" /> بيانات المتجر</CardTitle></CardHeader>
-                <CardContent className="space-y-4">
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                    <div>
-                      <label htmlFor="settings-store-name" className="text-sm font-semibold">اسم المتجر</label>
-                      <Input id="settings-store-name" value={settingsForm.storeName} onChange={(e) => setSettingsForm({ ...settingsForm, storeName: e.target.value })} placeholder="اسم متجرك" />
-                    </div>
-                    <div>
-                      <label htmlFor="settings-phone" className="text-sm font-semibold">رقم الهاتف</label>
-                      <Input id="settings-phone" value={settingsForm.phone} onChange={(e) => setSettingsForm({ ...settingsForm, phone: e.target.value })} placeholder="+249..." dir="ltr" />
-                    </div>
-                    <div>
-                      <label htmlFor="settings-email" className="text-sm font-semibold">البريد الإلكتروني</label>
-                      <Input id="settings-email" type="email" value={settingsForm.email} onChange={(e) => setSettingsForm({ ...settingsForm, email: e.target.value })} placeholder="info@store.com" dir="ltr" />
-                    </div>
-                    <div>
-                      <label htmlFor="settings-address" className="text-sm font-semibold">العنوان</label>
-                      <Input id="settings-address" value={settingsForm.address} onChange={(e) => setSettingsForm({ ...settingsForm, address: e.target.value })} placeholder="المدينة، الدولة" />
-                    </div>
-                    <div>
-                      <label htmlFor="settings-website-url" className="text-sm font-semibold">رابط الموقع الإلكتروني</label>
-                      <Input id="settings-website-url" value={settingsForm.websiteUrl} onChange={(e) => setSettingsForm({ ...settingsForm, websiteUrl: e.target.value })} placeholder="https://eleven-sd.com" dir="ltr" />
-                      <p className="text-xs text-muted-foreground mt-1">
-                        بدون شرطة "/" في الآخر — يُستخدم لبناء روابط سياسة الخصوصية وشروط الخدمة داخل تطبيق الأندرويد (ستفتح {"{الرابط}"}/privacy-policy و {"{الرابط}"}/terms).
+              <Tabs value={settingsSubTab} onValueChange={setSettingsSubTab}>
+                <TabsList className="flex-wrap h-auto">
+                  <TabsTrigger value="general">بيانات المتجر</TabsTrigger>
+                  <TabsTrigger value="shipping">الشحن والدفع</TabsTrigger>
+                  <TabsTrigger value="social">التواصل والمزايا</TabsTrigger>
+                  <TabsTrigger value="appearance">المظهر</TabsTrigger>
+                  <TabsTrigger value="inventory">المخزون</TabsTrigger>
+                </TabsList>
+
+                <TabsContent value="general" className="mt-4">
+                  <Card>
+                    <CardHeader><CardTitle className="flex items-center gap-2"><Settings className="w-5 h-5" /> بيانات المتجر</CardTitle></CardHeader>
+                    <CardContent className="space-y-4">
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                        <div>
+                          <label htmlFor="settings-store-name" className="text-sm font-semibold">اسم المتجر</label>
+                          <Input id="settings-store-name" value={settingsForm.storeName} onChange={(e) => setSettingsForm({ ...settingsForm, storeName: e.target.value })} placeholder="اسم متجرك" />
+                        </div>
+                        <div>
+                          <label htmlFor="settings-phone" className="text-sm font-semibold">رقم الهاتف</label>
+                          <Input id="settings-phone" value={settingsForm.phone} onChange={(e) => setSettingsForm({ ...settingsForm, phone: e.target.value })} placeholder="+249..." dir="ltr" />
+                        </div>
+                        <div>
+                          <label htmlFor="settings-email" className="text-sm font-semibold">البريد الإلكتروني</label>
+                          <Input id="settings-email" type="email" value={settingsForm.email} onChange={(e) => setSettingsForm({ ...settingsForm, email: e.target.value })} placeholder="info@store.com" dir="ltr" />
+                        </div>
+                        <div>
+                          <label htmlFor="settings-address" className="text-sm font-semibold">العنوان</label>
+                          <Input id="settings-address" value={settingsForm.address} onChange={(e) => setSettingsForm({ ...settingsForm, address: e.target.value })} placeholder="المدينة، الدولة" />
+                        </div>
+                        <div>
+                          <label htmlFor="settings-website-url" className="text-sm font-semibold">رابط الموقع الإلكتروني</label>
+                          <Input id="settings-website-url" value={settingsForm.websiteUrl} onChange={(e) => setSettingsForm({ ...settingsForm, websiteUrl: e.target.value })} placeholder="https://eleven-sd.com" dir="ltr" />
+                          <p className="text-xs text-muted-foreground mt-1">
+                            بدون شرطة "/" في الآخر — يُستخدم لبناء روابط سياسة الخصوصية وشروط الخدمة داخل تطبيق الأندرويد (ستفتح {"{الرابط}"}/privacy-policy و {"{الرابط}"}/terms).
+                          </p>
+                        </div>
+                      </div>
+                      <div>
+                        <label htmlFor="settings-store-description" className="text-sm font-semibold">وصف المتجر</label>
+                        <Textarea id="settings-store-description" value={settingsForm.storeDescription} onChange={(e) => setSettingsForm({ ...settingsForm, storeDescription: e.target.value })} placeholder="وصف قصير عن متجرك" rows={2} />
+                      </div>
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                        <div>
+                          <label htmlFor="settings-store-vision" className="text-sm font-semibold">رؤية المتجر</label>
+                          <Textarea id="settings-store-vision" value={settingsForm.storeVision} onChange={(e) => setSettingsForm({ ...settingsForm, storeVision: e.target.value })} placeholder="رؤية المتجر..." rows={3} />
+                        </div>
+                        <div>
+                          <label htmlFor="settings-store-mission" className="text-sm font-semibold">مهمة المتجر</label>
+                          <Textarea id="settings-store-mission" value={settingsForm.storeMission} onChange={(e) => setSettingsForm({ ...settingsForm, storeMission: e.target.value })} placeholder="مهمة المتجر..." rows={3} />
+                        </div>
+                      </div>
+                      <div>
+                        <label htmlFor="settings-store-about-image" className="text-sm font-semibold">رابط صورة "حول المتجر"</label>
+                        <Input id="settings-store-about-image" value={settingsForm.storeAboutImage} onChange={(e) => setSettingsForm({ ...settingsForm, storeAboutImage: e.target.value })} placeholder="https://..." dir="ltr" />
+                      </div>
+                    </CardContent>
+                  </Card>
+                </TabsContent>
+
+                <TabsContent value="shipping" className="mt-4 space-y-6">
+                  <Card>
+                    <CardHeader><CardTitle className="flex items-center gap-2"><ShoppingCart className="w-5 h-5" /> إعدادات الشحن</CardTitle></CardHeader>
+                    <CardContent className="space-y-4">
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                        <div>
+                          <label htmlFor="settings-shipping-cost" className="text-sm font-semibold">تكلفة الشحن (ج.س)</label>
+                          <Input id="settings-shipping-cost" type="number" value={settingsForm.shippingCost} onChange={(e) => setSettingsForm({ ...settingsForm, shippingCost: e.target.value === "" ? 0 : Number(e.target.value) })} onFocus={(e) => e.target.value === "0" && (e.target.value = "")} />
+                        </div>
+                        <div>
+                          <label htmlFor="settings-free-shipping-threshold" className="text-sm font-semibold">حد الشحن المجاني (ج.س)</label>
+                          <Input id="settings-free-shipping-threshold" type="number" value={settingsForm.freeShippingThreshold} onChange={(e) => setSettingsForm({ ...settingsForm, freeShippingThreshold: e.target.value === "" ? 0 : Number(e.target.value) })} onFocus={(e) => e.target.value === "0" && (e.target.value = "")} />
+                          <p className="text-xs text-muted-foreground mt-1">الطلبات التي تتجاوز هذا المبلغ تحصل على شحن مجاني</p>
+                        </div>
+                      </div>
+                    </CardContent>
+                  </Card>
+
+                  <Card>
+                    <CardHeader><CardTitle className="flex items-center gap-2"><DollarSign className="w-5 h-5" /> بيانات الحساب البنكي</CardTitle></CardHeader>
+                    <CardContent className="space-y-4">
+                      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                        <div>
+                          <label htmlFor="settings-bank-name" className="text-sm font-semibold">اسم البنك</label>
+                          <Input id="settings-bank-name" value={settingsForm.bankName} onChange={(e) => setSettingsForm({ ...settingsForm, bankName: e.target.value })} placeholder="بنك الخرطوم" />
+                        </div>
+                        <div>
+                          <label htmlFor="settings-bank-account-name" className="text-sm font-semibold">اسم صاحب الحساب</label>
+                          <Input id="settings-bank-account-name" value={settingsForm.bankAccountName} onChange={(e) => setSettingsForm({ ...settingsForm, bankAccountName: e.target.value })} placeholder="اسم الشركة أو الشخص" />
+                        </div>
+                        <div>
+                          <label htmlFor="settings-bank-account-number" className="text-sm font-semibold">رقم الحساب</label>
+                          <Input id="settings-bank-account-number" value={settingsForm.bankAccountNumber} onChange={(e) => setSettingsForm({ ...settingsForm, bankAccountNumber: e.target.value })} placeholder="1234567890" dir="ltr" />
+                        </div>
+                      </div>
+                    </CardContent>
+                  </Card>
+                </TabsContent>
+
+                <TabsContent value="social" className="mt-4 space-y-6">
+                  <Card>
+                    <CardHeader><CardTitle className="flex items-center gap-2"><Users className="w-5 h-5" /> روابط التواصل الاجتماعي</CardTitle></CardHeader>
+                    <CardContent className="space-y-4">
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                        <div>
+                          <label htmlFor="settings-whatsapp" className="text-sm font-semibold">واتساب (رقم الهاتف)</label>
+                          <Input id="settings-whatsapp" value={settingsForm.whatsapp} onChange={(e) => setSettingsForm({ ...settingsForm, whatsapp: e.target.value })} placeholder="+249123456789" dir="ltr" />
+                        </div>
+                        <div>
+                          <label htmlFor="settings-facebook" className="text-sm font-semibold">فيسبوك (رابط الصفحة)</label>
+                          <Input id="settings-facebook" value={settingsForm.facebook} onChange={(e) => setSettingsForm({ ...settingsForm, facebook: e.target.value })} placeholder="https://facebook.com/..." dir="ltr" />
+                        </div>
+                        <div>
+                          <label htmlFor="settings-instagram" className="text-sm font-semibold">إنستغرام (رابط الحساب)</label>
+                          <Input id="settings-instagram" value={settingsForm.instagram} onChange={(e) => setSettingsForm({ ...settingsForm, instagram: e.target.value })} placeholder="https://instagram.com/..." dir="ltr" />
+                        </div>
+                        <div>
+                          <label htmlFor="settings-twitter" className="text-sm font-semibold">تويتر / X (رابط الحساب)</label>
+                          <Input id="settings-twitter" value={settingsForm.twitter} onChange={(e) => setSettingsForm({ ...settingsForm, twitter: e.target.value })} placeholder="https://x.com/..." dir="ltr" />
+                        </div>
+                      </div>
+                    </CardContent>
+                  </Card>
+
+                  <Card>
+                    <CardHeader><CardTitle className="flex items-center gap-2"><Star className="w-5 h-5" /> مميزات المتجر (الصفحة الرئيسية)</CardTitle></CardHeader>
+                    <CardContent className="space-y-6">
+                      {/* ✅ إصلاح (Accessibility): كل حقلَي عنوان/وصف هنا كانا بلا أي تسمية
+                          نصية (لا label ولا aria-label)، فيعتمدان فقط على placeholder
+                          الذي يختفي فور الكتابة ولا يُعامَل بثبات كاسم accessible في
+                          كل قارئات الشاشة — أضيف aria-label صريح لكل حقل يتضمّن رقم
+                          الميزة حتى يُميَّز عن باقي الحقول المتطابقة شكلياً. */}
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                        <div className="space-y-2 border p-3 rounded-lg">
+                          <h4 className="font-bold text-primary">الميزة 1</h4>
+                          <Input aria-label="عنوان الميزة 1" value={settingsForm.feature1Title} onChange={(e) => setSettingsForm({ ...settingsForm, feature1Title: e.target.value })} placeholder="العنوان (مثلاً: شحن سريع)" />
+                          <Input aria-label="وصف الميزة 1" value={settingsForm.feature1Desc} onChange={(e) => setSettingsForm({ ...settingsForm, feature1Desc: e.target.value })} placeholder="الوصف" />
+                        </div>
+                        <div className="space-y-2 border p-3 rounded-lg">
+                          <h4 className="font-bold text-primary">الميزة 2</h4>
+                          <Input aria-label="عنوان الميزة 2" value={settingsForm.feature2Title} onChange={(e) => setSettingsForm({ ...settingsForm, feature2Title: e.target.value })} placeholder="العنوان (مثلاً: شراء آمن)" />
+                          <Input aria-label="وصف الميزة 2" value={settingsForm.feature2Desc} onChange={(e) => setSettingsForm({ ...settingsForm, feature2Desc: e.target.value })} placeholder="الوصف" />
+                        </div>
+                        <div className="space-y-2 border p-3 rounded-lg">
+                          <h4 className="font-bold text-primary">الميزة 3</h4>
+                          <Input aria-label="عنوان الميزة 3" value={settingsForm.feature3Title} onChange={(e) => setSettingsForm({ ...settingsForm, feature3Title: e.target.value })} placeholder="العنوان (مثلاً: خدمة 24/7)" />
+                          <Input aria-label="وصف الميزة 3" value={settingsForm.feature3Desc} onChange={(e) => setSettingsForm({ ...settingsForm, feature3Desc: e.target.value })} placeholder="الوصف" />
+                        </div>
+                        <div className="space-y-2 border p-3 rounded-lg">
+                          <h4 className="font-bold text-primary">الميزة 4</h4>
+                          <Input aria-label="عنوان الميزة 4" value={settingsForm.feature4Title} onChange={(e) => setSettingsForm({ ...settingsForm, feature4Title: e.target.value })} placeholder="العنوان (مثلاً: جودة عالية)" />
+                          <Input aria-label="وصف الميزة 4" value={settingsForm.feature4Desc} onChange={(e) => setSettingsForm({ ...settingsForm, feature4Desc: e.target.value })} placeholder="الوصف" />
+                        </div>
+                      </div>
+                    </CardContent>
+                  </Card>
+                </TabsContent>
+
+                <TabsContent value="appearance" className="mt-4">
+                  <Card>
+                    <CardHeader>
+                      <CardTitle className="flex items-center gap-2"><Palette className="w-5 h-5" /> ألوان تطبيق الأندرويد</CardTitle>
+                      <p className="text-sm text-muted-foreground mt-1">
+                        اختر ألوان التطبيق من هنا بدل التعديل بالكود — يقرأها تطبيق الأندرويد ويطبّقها تلقائياً
+                        في المرة التالية التي يفتح فيها المستخدم التطبيق (لا حاجة لإصدار جديد). اترك الحقل فارغاً
+                        (زر "استعادة الافتراضي") للرجوع للتصميم الأساسي.
                       </p>
-                    </div>
-                  </div>
-                  <div>
-                    <label htmlFor="settings-store-description" className="text-sm font-semibold">وصف المتجر</label>
-                    <Textarea id="settings-store-description" value={settingsForm.storeDescription} onChange={(e) => setSettingsForm({ ...settingsForm, storeDescription: e.target.value })} placeholder="وصف قصير عن متجرك" rows={2} />
-                  </div>
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                    <div>
-                      <label htmlFor="settings-store-vision" className="text-sm font-semibold">رؤية المتجر</label>
-                      <Textarea id="settings-store-vision" value={settingsForm.storeVision} onChange={(e) => setSettingsForm({ ...settingsForm, storeVision: e.target.value })} placeholder="رؤية المتجر..." rows={3} />
-                    </div>
-                    <div>
-                      <label htmlFor="settings-store-mission" className="text-sm font-semibold">مهمة المتجر</label>
-                      <Textarea id="settings-store-mission" value={settingsForm.storeMission} onChange={(e) => setSettingsForm({ ...settingsForm, storeMission: e.target.value })} placeholder="مهمة المتجر..." rows={3} />
-                    </div>
-                  </div>
-                  <div>
-                    <label htmlFor="settings-store-about-image" className="text-sm font-semibold">رابط صورة "حول المتجر"</label>
-                    <Input id="settings-store-about-image" value={settingsForm.storeAboutImage} onChange={(e) => setSettingsForm({ ...settingsForm, storeAboutImage: e.target.value })} placeholder="https://..." dir="ltr" />
-                  </div>
-                </CardContent>
-              </Card>
+                    </CardHeader>
+                    <CardContent className="space-y-6">
+                      {/* ✅ ثيمات جاهزة — بديل سريع للاختيار اليدوي لكل لون على حدة */}
+                      <div className="space-y-2">
+                        <label className="text-sm font-semibold">ثيمات جاهزة</label>
+                        <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-5 gap-3">
+                          {PRESET_THEMES.map((preset) => {
+                            const isActive =
+                              (settingsForm.primaryColor || "#0F172A") === preset.primary &&
+                              (settingsForm.secondaryColor || "#F8FAFC") === preset.secondary &&
+                              (settingsForm.backgroundColor || "#FFFFFF") === preset.background;
+                            return (
+                              <button
+                                key={preset.id}
+                                type="button"
+                                onClick={() => setSettingsForm({
+                                  ...settingsForm,
+                                  primaryColor: preset.id === "default" ? "" : preset.primary,
+                                  secondaryColor: preset.id === "default" ? "" : preset.secondary,
+                                  backgroundColor: preset.id === "default" ? "" : preset.background,
+                                })}
+                                className={`rounded-lg border p-2 text-right transition-colors ${isActive ? "border-primary ring-2 ring-primary/30" : "border-input hover:border-muted-foreground"}`}
+                                style={{ background: preset.background }}
+                              >
+                                <div className="flex items-center gap-1.5 mb-2">
+                                  <span className="w-5 h-5 rounded-full border" style={{ background: preset.primary }} />
+                                  <span className="w-5 h-5 rounded-full border" style={{ background: preset.secondary }} />
+                                </div>
+                                <span className="text-xs font-medium" style={{ color: getReadableTextColor(preset.background) }}>
+                                  {preset.name}
+                                </span>
+                              </button>
+                            );
+                          })}
+                        </div>
+                        <p className="text-xs text-muted-foreground">اختر ثيماً جاهزاً كنقطة بداية، ثم عدّل أي لون يدوياً تحت لو حبيت.</p>
+                      </div>
 
-              <Card>
-                <CardHeader><CardTitle className="flex items-center gap-2"><ShoppingCart className="w-5 h-5" /> إعدادات الشحن</CardTitle></CardHeader>
-                <CardContent className="space-y-4">
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                    <div>
-                      <label htmlFor="settings-shipping-cost" className="text-sm font-semibold">تكلفة الشحن (ج.س)</label>
-                      <Input id="settings-shipping-cost" type="number" value={settingsForm.shippingCost} onChange={(e) => setSettingsForm({ ...settingsForm, shippingCost: e.target.value === "" ? 0 : Number(e.target.value) })} onFocus={(e) => e.target.value === "0" && (e.target.value = "")} />
-                    </div>
-                    <div>
-                      <label htmlFor="settings-free-shipping-threshold" className="text-sm font-semibold">حد الشحن المجاني (ج.س)</label>
-                      <Input id="settings-free-shipping-threshold" type="number" value={settingsForm.freeShippingThreshold} onChange={(e) => setSettingsForm({ ...settingsForm, freeShippingThreshold: e.target.value === "" ? 0 : Number(e.target.value) })} onFocus={(e) => e.target.value === "0" && (e.target.value = "")} />
-                      <p className="text-xs text-muted-foreground mt-1">الطلبات التي تتجاوز هذا المبلغ تحصل على شحن مجاني</p>
-                    </div>
-                  </div>
-                </CardContent>
-              </Card>
+                      <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+                        <SettingsColorField
+                          label="اللون الرئيسي (Primary)"
+                          hint="لون الأزرار والعناصر الأساسية في كل شاشات التطبيق"
+                          value={settingsForm.primaryColor}
+                          defaultValue="#0F172A"
+                          onChange={(v) => setSettingsForm({ ...settingsForm, primaryColor: v })}
+                        />
+                        <SettingsColorField
+                          label="اللون الثانوي (Secondary)"
+                          hint="لون العناصر الثانوية والتمييز الخفيف"
+                          value={settingsForm.secondaryColor}
+                          defaultValue="#F8FAFC"
+                          onChange={(v) => setSettingsForm({ ...settingsForm, secondaryColor: v })}
+                        />
+                        <SettingsColorField
+                          label="لون الخلفية (Background)"
+                          hint="خلفية الشاشات في الوضع الفاتح"
+                          value={settingsForm.backgroundColor}
+                          defaultValue="#FFFFFF"
+                          onChange={(v) => setSettingsForm({ ...settingsForm, backgroundColor: v })}
+                        />
+                      </div>
 
-              <Card>
-                <CardHeader><CardTitle className="flex items-center gap-2"><DollarSign className="w-5 h-5" /> بيانات الحساب البنكي</CardTitle></CardHeader>
-                <CardContent className="space-y-4">
-                  <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                    <div>
-                      <label htmlFor="settings-bank-name" className="text-sm font-semibold">اسم البنك</label>
-                      <Input id="settings-bank-name" value={settingsForm.bankName} onChange={(e) => setSettingsForm({ ...settingsForm, bankName: e.target.value })} placeholder="بنك الخرطوم" />
-                    </div>
-                    <div>
-                      <label htmlFor="settings-bank-account-name" className="text-sm font-semibold">اسم صاحب الحساب</label>
-                      <Input id="settings-bank-account-name" value={settingsForm.bankAccountName} onChange={(e) => setSettingsForm({ ...settingsForm, bankAccountName: e.target.value })} placeholder="اسم الشركة أو الشخص" />
-                    </div>
-                    <div>
-                      <label htmlFor="settings-bank-account-number" className="text-sm font-semibold">رقم الحساب</label>
-                      <Input id="settings-bank-account-number" value={settingsForm.bankAccountNumber} onChange={(e) => setSettingsForm({ ...settingsForm, bankAccountNumber: e.target.value })} placeholder="1234567890" dir="ltr" />
-                    </div>
-                  </div>
-                </CardContent>
-              </Card>
+                      {/* ✅ تحذير تباين مباشر — قبل هذا ما كان فيه أي تنبيه لو اختار
+                          الأدمن لونين متقاربين تصير معهم الأزرار شبه مختفية فوق الخلفية. */}
+                      {(() => {
+                        const primary = /^#[0-9A-Fa-f]{6}$/.test(settingsForm.primaryColor) ? settingsForm.primaryColor : "#0F172A";
+                        const background = /^#[0-9A-Fa-f]{6}$/.test(settingsForm.backgroundColor) ? settingsForm.backgroundColor : "#FFFFFF";
+                        const secondary = /^#[0-9A-Fa-f]{6}$/.test(settingsForm.secondaryColor) ? settingsForm.secondaryColor : "#F8FAFC";
+                        const primaryRatio = getContrastRatio(primary, background);
+                        const secondaryRatio = getContrastRatio(secondary, background);
+                        const warnings: string[] = [];
+                        if (primaryRatio !== null && primaryRatio < 2.2) {
+                          warnings.push("اللون الرئيسي قريب جداً من لون الخلفية — الأزرار الأساسية قد تصير غير واضحة.");
+                        }
+                        if (secondaryRatio !== null && secondaryRatio < 1.15) {
+                          warnings.push("اللون الثانوي قريب جداً من لون الخلفية — الكروت والعناصر الثانوية قد تختفي بصرياً.");
+                        }
+                        if (warnings.length === 0) return null;
+                        return (
+                          <div className="rounded-lg border border-destructive/40 bg-destructive/5 p-3 space-y-1">
+                            {warnings.map((w, i) => (
+                              <p key={i} className="text-xs text-destructive flex items-start gap-1.5">
+                                <AlertCircle className="w-3.5 h-3.5 mt-0.5 shrink-0" /> {w}
+                              </p>
+                            ))}
+                          </div>
+                        );
+                      })()}
 
-              <Card>
-                <CardHeader><CardTitle className="flex items-center gap-2"><Users className="w-5 h-5" /> روابط التواصل الاجتماعي</CardTitle></CardHeader>
-                <CardContent className="space-y-4">
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                    <div>
-                      <label htmlFor="settings-whatsapp" className="text-sm font-semibold">واتساب (رقم الهاتف)</label>
-                      <Input id="settings-whatsapp" value={settingsForm.whatsapp} onChange={(e) => setSettingsForm({ ...settingsForm, whatsapp: e.target.value })} placeholder="+249123456789" dir="ltr" />
-                    </div>
-                    <div>
-                      <label htmlFor="settings-facebook" className="text-sm font-semibold">فيسبوك (رابط الصفحة)</label>
-                      <Input id="settings-facebook" value={settingsForm.facebook} onChange={(e) => setSettingsForm({ ...settingsForm, facebook: e.target.value })} placeholder="https://facebook.com/..." dir="ltr" />
-                    </div>
-                    <div>
-                      <label htmlFor="settings-instagram" className="text-sm font-semibold">إنستغرام (رابط الحساب)</label>
-                      <Input id="settings-instagram" value={settingsForm.instagram} onChange={(e) => setSettingsForm({ ...settingsForm, instagram: e.target.value })} placeholder="https://instagram.com/..." dir="ltr" />
-                    </div>
-                    <div>
-                      <label htmlFor="settings-twitter" className="text-sm font-semibold">تويتر / X (رابط الحساب)</label>
-                      <Input id="settings-twitter" value={settingsForm.twitter} onChange={(e) => setSettingsForm({ ...settingsForm, twitter: e.target.value })} placeholder="https://x.com/..." dir="ltr" />
-                    </div>
-                  </div>
-                </CardContent>
-              </Card>
+                      <div
+                        className="rounded-xl border p-4 flex items-center gap-3"
+                        style={{
+                          background: /^#[0-9A-Fa-f]{6}$/.test(settingsForm.backgroundColor) ? settingsForm.backgroundColor : "#FFFFFF",
+                          borderColor: /^#[0-9A-Fa-f]{6}$/.test(settingsForm.secondaryColor) ? settingsForm.secondaryColor : "#E2E8F0",
+                        }}
+                      >
+                        <span
+                          className="px-4 py-2 rounded-lg text-sm font-semibold"
+                          style={{
+                            background: /^#[0-9A-Fa-f]{6}$/.test(settingsForm.primaryColor) ? settingsForm.primaryColor : "#0F172A",
+                            color: getReadableTextColor(/^#[0-9A-Fa-f]{6}$/.test(settingsForm.primaryColor) ? settingsForm.primaryColor : "#0F172A"),
+                          }}
+                        >
+                          معاينة زر رئيسي
+                        </span>
+                        <span
+                          className="text-sm"
+                          style={{ color: getReadableTextColor(/^#[0-9A-Fa-f]{6}$/.test(settingsForm.backgroundColor) ? settingsForm.backgroundColor : "#FFFFFF") }}
+                        >
+                          هكذا سيبدو شكل الأزرار والخلفية تقريباً داخل التطبيق
+                        </span>
+                      </div>
+                      <p className="text-xs text-muted-foreground">
+                        ملاحظة: ألوان حالات الطلب (انتظار/دفع/توصيل/تسليم/إلغاء) والتنبيهات ثابتة بتصميم النظام ولا تتأثر بهذا القسم، حفاظاً على وضوحها.
+                      </p>
+                    </CardContent>
+                  </Card>
+                </TabsContent>
 
-              <Card>
-                <CardHeader><CardTitle className="flex items-center gap-2"><Star className="w-5 h-5" /> مميزات المتجر (الصفحة الرئيسية)</CardTitle></CardHeader>
-                <CardContent className="space-y-6">
-                  {/* ✅ إصلاح (Accessibility): كل حقلَي عنوان/وصف هنا كانا بلا أي تسمية
-                      نصية (لا label ولا aria-label)، فيعتمدان فقط على placeholder
-                      الذي يختفي فور الكتابة ولا يُعامَل بثبات كاسم accessible في
-                      كل قارئات الشاشة — أضيف aria-label صريح لكل حقل يتضمّن رقم
-                      الميزة حتى يُميَّز عن باقي الحقول المتطابقة شكلياً. */}
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                    <div className="space-y-2 border p-3 rounded-lg">
-                      <h4 className="font-bold text-primary">الميزة 1</h4>
-                      <Input aria-label="عنوان الميزة 1" value={settingsForm.feature1Title} onChange={(e) => setSettingsForm({ ...settingsForm, feature1Title: e.target.value })} placeholder="العنوان (مثلاً: شحن سريع)" />
-                      <Input aria-label="وصف الميزة 1" value={settingsForm.feature1Desc} onChange={(e) => setSettingsForm({ ...settingsForm, feature1Desc: e.target.value })} placeholder="الوصف" />
-                    </div>
-                    <div className="space-y-2 border p-3 rounded-lg">
-                      <h4 className="font-bold text-primary">الميزة 2</h4>
-                      <Input aria-label="عنوان الميزة 2" value={settingsForm.feature2Title} onChange={(e) => setSettingsForm({ ...settingsForm, feature2Title: e.target.value })} placeholder="العنوان (مثلاً: شراء آمن)" />
-                      <Input aria-label="وصف الميزة 2" value={settingsForm.feature2Desc} onChange={(e) => setSettingsForm({ ...settingsForm, feature2Desc: e.target.value })} placeholder="الوصف" />
-                    </div>
-                    <div className="space-y-2 border p-3 rounded-lg">
-                      <h4 className="font-bold text-primary">الميزة 3</h4>
-                      <Input aria-label="عنوان الميزة 3" value={settingsForm.feature3Title} onChange={(e) => setSettingsForm({ ...settingsForm, feature3Title: e.target.value })} placeholder="العنوان (مثلاً: خدمة 24/7)" />
-                      <Input aria-label="وصف الميزة 3" value={settingsForm.feature3Desc} onChange={(e) => setSettingsForm({ ...settingsForm, feature3Desc: e.target.value })} placeholder="الوصف" />
-                    </div>
-                    <div className="space-y-2 border p-3 rounded-lg">
-                      <h4 className="font-bold text-primary">الميزة 4</h4>
-                      <Input aria-label="عنوان الميزة 4" value={settingsForm.feature4Title} onChange={(e) => setSettingsForm({ ...settingsForm, feature4Title: e.target.value })} placeholder="العنوان (مثلاً: جودة عالية)" />
-                      <Input aria-label="وصف الميزة 4" value={settingsForm.feature4Desc} onChange={(e) => setSettingsForm({ ...settingsForm, feature4Desc: e.target.value })} placeholder="الوصف" />
-                    </div>
-                  </div>
-                </CardContent>
-              </Card>
-
-              <Card>
-                <CardHeader><CardTitle className="flex items-center gap-2"><Package className="w-5 h-5" /> إعدادات المخزون</CardTitle></CardHeader>
-                <CardContent>
-                  <div className="max-w-xs">
-                    <label htmlFor="settings-low-stock-threshold" className="text-sm font-semibold">حد المخزون المنخفض</label>
-                    <Input id="settings-low-stock-threshold" type="number" value={settingsForm.lowStockThreshold} onChange={(e) => setSettingsForm({ ...settingsForm, lowStockThreshold: e.target.value === "" ? 0 : Number(e.target.value) })} onFocus={(e) => e.target.value === "0" && (e.target.value = "")} min={1} />
-                    <p className="text-xs text-muted-foreground mt-1">المنتجات التي يساوي مخزونها هذا الرقم أو أقل تُعتبر منخفضة المخزون</p>
-                  </div>
-                </CardContent>
-              </Card>
+                <TabsContent value="inventory" className="mt-4">
+                  <Card>
+                    <CardHeader><CardTitle className="flex items-center gap-2"><Package className="w-5 h-5" /> إعدادات المخزون</CardTitle></CardHeader>
+                    <CardContent>
+                      <div className="max-w-xs">
+                        <label htmlFor="settings-low-stock-threshold" className="text-sm font-semibold">حد المخزون المنخفض</label>
+                        <Input id="settings-low-stock-threshold" type="number" value={settingsForm.lowStockThreshold} onChange={(e) => setSettingsForm({ ...settingsForm, lowStockThreshold: e.target.value === "" ? 0 : Number(e.target.value) })} onFocus={(e) => e.target.value === "0" && (e.target.value = "")} min={1} />
+                        <p className="text-xs text-muted-foreground mt-1">المنتجات التي يساوي مخزونها هذا الرقم أو أقل تُعتبر منخفضة المخزون</p>
+                      </div>
+                    </CardContent>
+                  </Card>
+                </TabsContent>
+              </Tabs>
 
               <Button
                 className="w-full md:w-auto"

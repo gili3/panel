@@ -21,7 +21,7 @@ import { toast } from "sonner";
 import { getOrderStatusConfig } from "@/lib/orderStatus";
 import { formatNumber } from "@/lib/formatters";
 import { uploadMultipleImages, deleteImageFromStorage, compressImage, uploadImageToStorage } from "@/lib/imageUpload";
-import { PRESET_THEMES, getContrastRatio, getReadableTextColor } from "@/lib/themePresets";
+import { PRESET_THEMES, getContrastRatio, getReadableTextColor, deriveDarkTriplet } from "@/lib/themePresets";
 import { db } from "@/lib/firebase";
 import { collection, onSnapshot, orderBy, limit as fsLimit, query as fsQuery } from "firebase/firestore";
 import { reportSystemWarning, clearSystemWarning } from "@/lib/systemWarnings";
@@ -351,6 +351,9 @@ export default function AdminDashboard() {
     primaryColor: "",
     secondaryColor: "",
     backgroundColor: "",
+    surfaceColor: "",
+    textColor: "",
+    accentColor: "",
   });
   // تبويب فرعي داخل صفحة الإعدادات — لتقسيمها إلى أقسام مرتبة بدل نموذج طويل واحد
   const [settingsSubTab, setSettingsSubTab] = useState("general");
@@ -510,6 +513,9 @@ export default function AdminDashboard() {
         primaryColor: s.primaryColor || "",
         secondaryColor: s.secondaryColor || "",
         backgroundColor: s.backgroundColor || "",
+        surfaceColor: s.surfaceColor || "",
+        textColor: s.textColor || "",
+        accentColor: s.accentColor || "",
       });
     }
   }, [storeSettings]);
@@ -2093,63 +2099,105 @@ export default function AdminDashboard() {
                       </p>
                     </CardHeader>
                     <CardContent className="space-y-6">
-                      {/* ✅ ثيمات جاهزة — بديل سريع للاختيار اليدوي لكل لون على حدة */}
+                      {/* ✅ ثيمات جاهزة — بديل سريع للاختيار اليدوي لكل لون على حدة.
+                          كل ثيم يملأ الست حقول معاً (Primary/Secondary/Background/
+                          Surface/Text/Accent)؛ نسخة الوضع الداكن تُشتق تلقائياً. */}
                       <div className="space-y-2">
-                        <label className="text-sm font-semibold">ثيمات جاهزة</label>
-                        <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-5 gap-3">
+                        <div className="flex items-center justify-between">
+                          <label className="text-sm font-semibold">ثيمات جاهزة</label>
+                          <button
+                            type="button"
+                            onClick={() => setSettingsForm({
+                              ...settingsForm,
+                              primaryColor: "", secondaryColor: "", backgroundColor: "",
+                              surfaceColor: "", textColor: "", accentColor: "",
+                            })}
+                            className="text-xs text-muted-foreground underline hover:text-foreground"
+                          >
+                            استعادة تصميم التطبيق الافتراضي
+                          </button>
+                        </div>
+                        <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-6 gap-3">
                           {PRESET_THEMES.map((preset) => {
                             const isActive =
-                              (settingsForm.primaryColor || "#0F172A") === preset.primary &&
-                              (settingsForm.secondaryColor || "#F8FAFC") === preset.secondary &&
-                              (settingsForm.backgroundColor || "#FFFFFF") === preset.background;
+                              settingsForm.primaryColor === preset.primary &&
+                              settingsForm.backgroundColor === preset.background;
                             return (
                               <button
                                 key={preset.id}
                                 type="button"
                                 onClick={() => setSettingsForm({
                                   ...settingsForm,
-                                  primaryColor: preset.id === "default" ? "" : preset.primary,
-                                  secondaryColor: preset.id === "default" ? "" : preset.secondary,
-                                  backgroundColor: preset.id === "default" ? "" : preset.background,
+                                  primaryColor: preset.primary,
+                                  secondaryColor: preset.secondary,
+                                  backgroundColor: preset.background,
+                                  surfaceColor: preset.surface,
+                                  textColor: preset.text,
+                                  accentColor: preset.accent,
                                 })}
-                                className={`rounded-lg border p-2 text-right transition-colors ${isActive ? "border-primary ring-2 ring-primary/30" : "border-input hover:border-muted-foreground"}`}
+                                className={`relative rounded-lg border p-2 text-right transition-colors ${isActive ? "border-primary ring-2 ring-primary/30" : "border-input hover:border-muted-foreground"}`}
                                 style={{ background: preset.background }}
                               >
+                                {preset.recommended && (
+                                  <span className="absolute -top-2 -right-1 text-[10px] bg-primary text-primary-foreground rounded-full px-1.5 py-0.5">مقترح</span>
+                                )}
                                 <div className="flex items-center gap-1.5 mb-2">
                                   <span className="w-5 h-5 rounded-full border" style={{ background: preset.primary }} />
                                   <span className="w-5 h-5 rounded-full border" style={{ background: preset.secondary }} />
+                                  <span className="w-5 h-5 rounded-full border" style={{ background: preset.accent }} />
                                 </div>
-                                <span className="text-xs font-medium" style={{ color: getReadableTextColor(preset.background) }}>
+                                <span className="text-xs font-medium" style={{ color: preset.text }}>
                                   {preset.name}
                                 </span>
                               </button>
                             );
                           })}
                         </div>
-                        <p className="text-xs text-muted-foreground">اختر ثيماً جاهزاً كنقطة بداية، ثم عدّل أي لون يدوياً تحت لو حبيت.</p>
+                        <p className="text-xs text-muted-foreground">اختر ثيماً جاهزاً كنقطة بداية، ثم عدّل أي لون يدوياً تحت لو حبيت. Emerald هو الثيم المرشَّح كهوية أساسية لـ Eleven.</p>
                       </div>
 
                       <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
                         <SettingsColorField
                           label="اللون الرئيسي (Primary)"
-                          hint="لون الأزرار والعناصر الأساسية في كل شاشات التطبيق"
+                          hint="لون الأزرار والعناصر التفاعلية الأساسية"
                           value={settingsForm.primaryColor}
                           defaultValue="#0F172A"
                           onChange={(v) => setSettingsForm({ ...settingsForm, primaryColor: v })}
                         />
                         <SettingsColorField
                           label="اللون الثانوي (Secondary)"
-                          hint="لون العناصر الثانوية والتمييز الخفيف"
+                          hint="لون العناصر المساعدة والتمييز الخفيف"
                           value={settingsForm.secondaryColor}
                           defaultValue="#F8FAFC"
                           onChange={(v) => setSettingsForm({ ...settingsForm, secondaryColor: v })}
                         />
                         <SettingsColorField
-                          label="لون الخلفية (Background)"
+                          label="لمسة العروض (Accent)"
+                          hint="لون العروض والشارات والتمييزات الخاصة"
+                          value={settingsForm.accentColor}
+                          defaultValue="#0F172A"
+                          onChange={(v) => setSettingsForm({ ...settingsForm, accentColor: v })}
+                        />
+                        <SettingsColorField
+                          label="خلفية التطبيق (Background)"
                           hint="خلفية الشاشات في الوضع الفاتح"
                           value={settingsForm.backgroundColor}
                           defaultValue="#FFFFFF"
                           onChange={(v) => setSettingsForm({ ...settingsForm, backgroundColor: v })}
+                        />
+                        <SettingsColorField
+                          label="البطاقات والحقول (Surface)"
+                          hint="خلفية الكروت والحقول فوق خلفية التطبيق"
+                          value={settingsForm.surfaceColor}
+                          defaultValue="#FFFFFF"
+                          onChange={(v) => setSettingsForm({ ...settingsForm, surfaceColor: v })}
+                        />
+                        <SettingsColorField
+                          label="النصوص الرئيسية (Text)"
+                          hint="لون النص الأساسي فوق الخلفية والبطاقات"
+                          value={settingsForm.textColor}
+                          defaultValue="#0F172A"
+                          onChange={(v) => setSettingsForm({ ...settingsForm, textColor: v })}
                         />
                       </div>
 
@@ -2159,14 +2207,19 @@ export default function AdminDashboard() {
                         const primary = /^#[0-9A-Fa-f]{6}$/.test(settingsForm.primaryColor) ? settingsForm.primaryColor : "#0F172A";
                         const background = /^#[0-9A-Fa-f]{6}$/.test(settingsForm.backgroundColor) ? settingsForm.backgroundColor : "#FFFFFF";
                         const secondary = /^#[0-9A-Fa-f]{6}$/.test(settingsForm.secondaryColor) ? settingsForm.secondaryColor : "#F8FAFC";
+                        const text = /^#[0-9A-Fa-f]{6}$/.test(settingsForm.textColor) ? settingsForm.textColor : "#0F172A";
                         const primaryRatio = getContrastRatio(primary, background);
                         const secondaryRatio = getContrastRatio(secondary, background);
+                        const textRatio = getContrastRatio(text, background);
                         const warnings: string[] = [];
                         if (primaryRatio !== null && primaryRatio < 2.2) {
                           warnings.push("اللون الرئيسي قريب جداً من لون الخلفية — الأزرار الأساسية قد تصير غير واضحة.");
                         }
                         if (secondaryRatio !== null && secondaryRatio < 1.15) {
                           warnings.push("اللون الثانوي قريب جداً من لون الخلفية — الكروت والعناصر الثانوية قد تختفي بصرياً.");
+                        }
+                        if (textRatio !== null && textRatio < 4.5) {
+                          warnings.push("لون النص قريب جداً من لون الخلفية — القراءة قد تكون صعبة.");
                         }
                         if (warnings.length === 0) return null;
                         return (
@@ -2180,34 +2233,42 @@ export default function AdminDashboard() {
                         );
                       })()}
 
-                      <div
-                        className="rounded-xl border p-4 flex items-center gap-3"
-                        style={{
-                          background: /^#[0-9A-Fa-f]{6}$/.test(settingsForm.backgroundColor) ? settingsForm.backgroundColor : "#FFFFFF",
-                          borderColor: /^#[0-9A-Fa-f]{6}$/.test(settingsForm.secondaryColor) ? settingsForm.secondaryColor : "#E2E8F0",
-                        }}
-                      >
-                        <span
-                          className="px-4 py-2 rounded-lg text-sm font-semibold"
-                          style={{
-                            background: /^#[0-9A-Fa-f]{6}$/.test(settingsForm.primaryColor) ? settingsForm.primaryColor : "#0F172A",
-                            color: getReadableTextColor(/^#[0-9A-Fa-f]{6}$/.test(settingsForm.primaryColor) ? settingsForm.primaryColor : "#0F172A"),
-                          }}
-                        >
-                          معاينة زر رئيسي
-                        </span>
-                        <span
-                          className="text-sm"
-                          style={{ color: getReadableTextColor(/^#[0-9A-Fa-f]{6}$/.test(settingsForm.backgroundColor) ? settingsForm.backgroundColor : "#FFFFFF") }}
-                        >
-                          هكذا سيبدو شكل الأزرار والخلفية تقريباً داخل التطبيق
-                        </span>
-                      </div>
+                      {/* ✅ معاينة الوضعين الفاتح والداكن معاً — نسخة الداكن هنا
+                          نفس الحساب المطبَّق فعلياً في تطبيق الأندرويد (Theme.kt
+                          ::deriveDarkVariant)، حتى تُطابق المعاينة الواقع. */}
+                      {(() => {
+                        const primary = /^#[0-9A-Fa-f]{6}$/.test(settingsForm.primaryColor) ? settingsForm.primaryColor : "#0F172A";
+                        const secondary = /^#[0-9A-Fa-f]{6}$/.test(settingsForm.secondaryColor) ? settingsForm.secondaryColor : "#F8FAFC";
+                        const accent = /^#[0-9A-Fa-f]{6}$/.test(settingsForm.accentColor) ? settingsForm.accentColor : primary;
+                        const background = /^#[0-9A-Fa-f]{6}$/.test(settingsForm.backgroundColor) ? settingsForm.backgroundColor : "#FFFFFF";
+                        const surface = /^#[0-9A-Fa-f]{6}$/.test(settingsForm.surfaceColor) ? settingsForm.surfaceColor : "#FFFFFF";
+                        const text = /^#[0-9A-Fa-f]{6}$/.test(settingsForm.textColor) ? settingsForm.textColor : getReadableTextColor(background);
+                        const dark = deriveDarkTriplet(background, surface, text);
+                        const Preview = ({ title, bg, surfaceColor, textColor }: { title: string; bg: string; surfaceColor: string; textColor: string }) => (
+                          <div className="rounded-xl border p-4 space-y-3" style={{ background: bg, borderColor: secondary }}>
+                            <p className="text-xs font-semibold" style={{ color: textColor }}>{title}</p>
+                            <div className="flex items-center gap-2 flex-wrap">
+                              <span className="px-4 py-2 rounded-lg text-sm font-semibold" style={{ background: primary, color: getReadableTextColor(primary) }}>زر رئيسي</span>
+                              <span className="px-3 py-1.5 rounded-lg text-xs font-medium border" style={{ borderColor: secondary, color: textColor }}>ثانوي</span>
+                              <span className="px-2 py-1 rounded-md text-xs font-semibold" style={{ background: accent, color: getReadableTextColor(accent) }}>عرض</span>
+                            </div>
+                            <div className="rounded-lg p-3" style={{ background: surfaceColor }}>
+                              <p className="text-sm" style={{ color: textColor }}>بطاقة منتج — هكذا يبدو النص فوق Surface</p>
+                            </div>
+                          </div>
+                        );
+                        return (
+                          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                            <Preview title="☀️ الوضع الفاتح" bg={background} surfaceColor={surface} textColor={text} />
+                            <Preview title="🌙 الوضع الداكن (مُشتق تلقائياً)" bg={dark.background} surfaceColor={dark.surface} textColor={dark.text} />
+                          </div>
+                        );
+                      })()}
                       <p className="text-xs text-muted-foreground">
-                        ملاحظة: ألوان حالات الطلب (انتظار/دفع/توصيل/تسليم/إلغاء) والتنبيهات ثابتة بتصميم النظام ولا تتأثر بهذا القسم، حفاظاً على وضوحها.
+                        ملاحظة: ألوان حالات الطلب (انتظار/دفع/توصيل/تسليم/إلغاء) والتنبيهات (نجاح/خطأ/تحذير/معلومة) ثابتة بتصميم النظام ولا تتأثر بهذا القسم، حفاظاً على وضوحها في كل الثيمات.
                       </p>
                       <p className="text-xs text-muted-foreground">
-                        ملاحظة: هذه الألوان تُطبَّق على وضع التطبيق الفاتح فقط. في الوضع الداكن يستخدم التطبيق ألوانه الافتراضية المصمَّمة خصيصاً للخلفية الداكنة، حفاظاً على وضوح التباين لكل مستخدمي الوضع الداكن.
+                        ملاحظة: Primary/Secondary/Accent تُطبَّق كما هي بالوضعين الفاتح والداكن (هي هوية الثيم). Background/Surface/Text المُدخلة أعلاه هي قيم الوضع الفاتح فقط — نسخة الوضع الداكن منها (المعروضة بالمعاينة) تُشتق حسابياً تلقائياً، فلا حاجة لإدخالها مرتين.
                       </p>
                     </CardContent>
                   </Card>

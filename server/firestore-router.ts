@@ -1010,6 +1010,14 @@ export const firestoreRouter = router({
       primaryColor: z.string().regex(/^#[0-9A-Fa-f]{6}$/).or(z.literal("")).optional(),
       secondaryColor: z.string().regex(/^#[0-9A-Fa-f]{6}$/).or(z.literal("")).optional(),
       backgroundColor: z.string().regex(/^#[0-9A-Fa-f]{6}$/).or(z.literal("")).optional(),
+      // ✅ توسعة نظام الثيمات: 3 حقول جديدة تكمل الست ألوان المطلوبة
+      // (Primary/Secondary/Background/Surface/Text/Accent). نسخة الوضع
+      // الداكن تُشتق حسابياً من Background/Surface/Text ولا تُخزَّن
+      // بشكل منفصل — راجع deriveDarkTriplet (themePresets.ts) و
+      // deriveDarkVariant (Theme.kt) في تطبيق الأندرويد.
+      surfaceColor: z.string().regex(/^#[0-9A-Fa-f]{6}$/).or(z.literal("")).optional(),
+      textColor: z.string().regex(/^#[0-9A-Fa-f]{6}$/).or(z.literal("")).optional(),
+      accentColor: z.string().regex(/^#[0-9A-Fa-f]{6}$/).or(z.literal("")).optional(),
     }))
     .mutation(async ({ input, ctx }) => {
       await adminDb.collection("settings").doc("store").set({

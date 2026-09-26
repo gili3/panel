@@ -13,7 +13,7 @@ import { useAuth } from "@/_core/hooks/useAuth";
 import {
   BarChart3, ShoppingBag, DollarSign, Plus, Edit2, Trash2, Loader2, AlertCircle,
   X, Upload, Users, Package, TrendingUp, Clock, CheckCircle, ChevronDown, ChevronUp,
-  Image as ImageIcon, Settings, ShoppingCart, Star, Tag, Palette, RotateCcw
+  Image as ImageIcon, Settings, ShoppingCart, Star, Tag, Palette, RotateCcw, MapPin
 } from "lucide-react";
 import { useState, useEffect, useRef } from "react";
 import { trpc } from "@/lib/trpc";
@@ -77,6 +77,12 @@ interface OrderStatusDialogProps {
   currentStatus: string;
   currentPaymentStatus: string;
   paymentReceipt?: string;
+  // ✅ جديد: عنوان الشحن (بما فيه latitude/longitude إن وُجدت) — لعرضه
+  // للأدمن مع رابط فتح مباشر على خرائط جوجل يسهّل التوصيل
+  shippingAddress?: {
+    fullName?: string; name?: string; phone?: string; city?: string;
+    address?: string; latitude?: number; longitude?: number;
+  } | null;
   onSave: (status: string, paymentStatus: string) => void;
   onClose: () => void;
 }
@@ -97,7 +103,7 @@ function StatusBadge({ status }: { status: string }) {
   );
 }
 
-function OrderStatusDialog({ orderId, currentStatus, currentPaymentStatus, paymentReceipt, onSave, onClose }: OrderStatusDialogProps) {
+function OrderStatusDialog({ orderId, currentStatus, currentPaymentStatus, paymentReceipt, shippingAddress, onSave, onClose }: OrderStatusDialogProps) {
   const [status, setStatus] = useState(currentStatus);
   const [paymentStatus, setPaymentStatus] = useState(currentPaymentStatus);
 
@@ -106,12 +112,35 @@ function OrderStatusDialog({ orderId, currentStatus, currentPaymentStatus, payme
     setPaymentStatus(currentPaymentStatus);
   }, [currentStatus, currentPaymentStatus]);
 
+  const hasLocation = !!(shippingAddress?.latitude && shippingAddress?.longitude);
+
   return (
     <DialogContent>
       <DialogHeader>
         <DialogTitle>تحديث حالة الطلب #{orderId.slice(0, 8)}</DialogTitle>
       </DialogHeader>
       <div className="space-y-4">
+        {shippingAddress && (shippingAddress.address || shippingAddress.city) && (
+          <div className="rounded-lg border p-3 text-sm space-y-1">
+            <p className="font-semibold flex items-center gap-2">
+              <MapPin className="w-4 h-4" /> عنوان التوصيل
+            </p>
+            <p>{shippingAddress.fullName || shippingAddress.name || "-"} — {shippingAddress.phone || "-"}</p>
+            <p className="text-muted-foreground">{shippingAddress.city}{shippingAddress.city && shippingAddress.address ? " — " : ""}{shippingAddress.address}</p>
+            {hasLocation ? (
+              <a
+                href={`https://www.google.com/maps?q=${shippingAddress!.latitude},${shippingAddress!.longitude}`}
+                target="_blank"
+                rel="noreferrer"
+                className="text-primary hover:underline text-sm flex items-center gap-1 pt-1"
+              >
+                <MapPin className="w-3.5 h-3.5" /> فتح الموقع في خرائط جوجل
+              </a>
+            ) : (
+              <p className="text-xs text-muted-foreground pt-1">لم يحدّد العميل الموقع على الخريطة</p>
+            )}
+          </div>
+        )}
         <div>
           <label htmlFor="order-status" className="text-sm font-semibold">حالة الطلب</label>
           <Select value={status} onValueChange={setStatus}>
@@ -320,7 +349,7 @@ export default function AdminDashboard() {
   const [showCouponDialog, setShowCouponDialog] = useState(false);
   const [isEditingCoupon, setIsEditingCoupon] = useState(false);
 
-  const [activeOrderDialog, setActiveOrderDialog] = useState<{ id: string; status: string; paymentStatus: string; receipt?: string } | null>(null);
+  const [activeOrderDialog, setActiveOrderDialog] = useState<{ id: string; status: string; paymentStatus: string; receipt?: string; shippingAddress?: any } | null>(null);
   const [orderStatusFilter, setOrderStatusFilter] = useState<string>("all");
 
   const [settingsForm, setSettingsForm] = useState({
@@ -1407,6 +1436,7 @@ export default function AdminDashboard() {
                           <TableHead>رقم الطلب</TableHead>
                           <TableHead>الحالة</TableHead>
                           <TableHead>المبلغ</TableHead>
+                          <TableHead>العنوان</TableHead>
                           <TableHead>التاريخ</TableHead>
                           <TableHead>الإجراءات</TableHead>
                         </TableRow>
@@ -1417,6 +1447,23 @@ export default function AdminDashboard() {
                             <TableCell className="font-semibold">{order.orderNumber || "-"}</TableCell>
                             <TableCell><StatusBadge status={order.status} /></TableCell>
                             <TableCell>{formatNumber(order.total ?? 0)} ج.س</TableCell>
+                            <TableCell className="max-w-[180px]">
+                              <div className="truncate text-sm text-muted-foreground">
+                                {order.shippingAddress?.city}
+                                {order.shippingAddress?.city && order.shippingAddress?.address ? " — " : ""}
+                                {order.shippingAddress?.address}
+                              </div>
+                              {order.shippingAddress?.latitude && order.shippingAddress?.longitude ? (
+                                <a
+                                  href={`https://www.google.com/maps?q=${order.shippingAddress.latitude},${order.shippingAddress.longitude}`}
+                                  target="_blank"
+                                  rel="noreferrer"
+                                  className="text-primary hover:underline text-xs flex items-center gap-1"
+                                >
+                                  <MapPin className="w-3 h-3" /> فتح بالخريطة
+                                </a>
+                              ) : null}
+                            </TableCell>
                             <TableCell>
                               {order.createdAt ? (
                                 new Date(order.createdAt).toLocaleDateString('ar-EG-u-nu-latn', {
@@ -1436,6 +1483,7 @@ export default function AdminDashboard() {
                                         status: order.status || "pending",
                                         paymentStatus: order.paymentStatus || "unpaid",
                                         receipt: order.paymentReceipt,
+                                        shippingAddress: order.shippingAddress || null,
                                       })}
                                     >
                                       <Edit2 className="w-4 h-4" />
@@ -1447,6 +1495,7 @@ export default function AdminDashboard() {
                                       currentStatus={activeOrderDialog.status}
                                       currentPaymentStatus={activeOrderDialog.paymentStatus}
                                       paymentReceipt={activeOrderDialog.receipt}
+                                      shippingAddress={activeOrderDialog.shippingAddress}
                                       onSave={(status, paymentStatus) => handleSaveOrderStatus(order.id, status, paymentStatus)}
                                       onClose={() => setActiveOrderDialog(null)}
                                     />

@@ -5,6 +5,7 @@ import { adminUsersRouter } from "./admin-users-router";
 import { adminNotificationsRouter } from "./admin-notifications-router";
 import { adminContactRouter } from "./admin-contact-router";
 import { errorLogRouter } from "./error-log-router";
+import { deliveryZoneRouter } from "./delivery-zone-router";
 // ✅ v2: adminAlertsRouter (list/markRead/markAllRead عبر tRPC + polling)
 // أُزيل بالكامل — الجرس الآن onSnapshot حي مباشرة على
 // users/{uid}/adminAlerts (راجع client/src/hooks/useAdminAlerts.ts)،
@@ -35,6 +36,7 @@ export const appRouter = router({
   adminNotifications: adminNotificationsRouter,
   adminContact: adminContactRouter,
   errorLog: errorLogRouter,
+  deliveryZones: deliveryZoneRouter,
 });
 
 export type AppRouter = typeof appRouter;

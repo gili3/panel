@@ -9,6 +9,7 @@ import { calculateShippingCost, calculateSubtotal, calculateOrderTotal } from ".
 import { ENV } from "./_core/env";
 import { checkRateLimit, clientKey } from "./_core/rateLimit";
 import { syncProductToIndex, removeProductFromIndex, resyncProductsStock } from "./algolia-service";
+import { assertWithinDeliveryZone } from "./delivery-zone-service";
 import type { Product } from "@shared/types";
 
 // ✅ إصلاح: المسارات التي تُرجع منتجات كانت تعتمد على استنتاج ضمني من
@@ -29,6 +30,28 @@ const PRODUCT_NOT_FOUND_MSG = "هذا المنتج لم يعد متوفراً";
 // آمناً تعمياً (Non-CSPRNG)؛ نستخدم crypto.randomBytes بدلاً منه.
 function generateVerificationToken(): string {
   return randomBytes(24).toString("base64url");
+}
+
+// ✅ إصلاح: shippingAddress كان z.any() بلا أي تحقق — أي حقل (أو غيابه بالكامل)
+// كان يُقبل من العميل. الآن حقول العنوان النصية إجبارية، وlatitude/longitude
+// مطلوبان كرقمين (قد يكونا 0/0 فقط إن لم يُفعَّل تحديد الموقع على الخريطة
+// إطلاقاً — extractLatLng أدناه يتعامل مع هذه الحالة كـ"لا يوجد موقع محدَّد").
+const shippingAddressSchema = z.object({
+  fullName: z.string().min(1),
+  phone: z.string().min(1),
+  city: z.string().min(1),
+  address: z.string().min(1),
+  latitude: z.number(),
+  longitude: z.number(),
+}).passthrough();
+
+// ✅ 0/0 يعني عملياً "لم يُحدَّد موقع" (القيمة الافتراضية بتطبيق الأندرويد
+// قبل أي اختيار فعلي على الخريطة أو صلاحية GPS) — نتعامل معها كموقع مفقود
+// وليس كإحداثيات حقيقية عند البحرين خط الاستواء وخط غرينتش.
+function extractLatLng(shippingAddress: z.infer<typeof shippingAddressSchema>): { lat: number; lng: number } | null {
+  const { latitude, longitude } = shippingAddress;
+  if (latitude === 0 && longitude === 0) return null;
+  return { lat: latitude, lng: longitude };
 }
 
 // ✅ إصلاح: بعض المستندات (خصوصاً ما يُكتب مباشرة من تطبيق الأندرويد عبر
@@ -852,13 +875,18 @@ export const firestoreRouter = router({
         quantity: z.number().min(1),
       })),
       couponCode: z.string().optional(),
-      shippingAddress: z.any(),
+      shippingAddress: shippingAddressSchema,
       paymentMethod: z.string(),
       paymentReceipt: z.string().optional(),
     }))
     .mutation(async ({ input, ctx }) => {
       const verificationToken = generateVerificationToken();
       const couponCode = input.couponCode?.trim().toUpperCase();
+
+      // ✅ جديد: التحقق من أن موقع العميل يقع فعلياً ضمن حدود مناطق التوصيل
+      // المعتمدة *قبل* لمس المخزون/الكوبون — إن كانت خارج النطاق يُرفض الطلب
+      // كاملاً هنا بلا أي أثر جانبي (لا خصم مخزون، لا استهلاك كوبون).
+      await assertWithinDeliveryZone(extractLatLng(input.shippingAddress));
 
       // ✅ إصلاح: رقم الطلب يُستهلك الآن داخل نفس الـtransaction الذرّية
       // للتحقق/الحجز (وليس بـtransaction منفصلة قبلها). سابقاً كان الرقم
@@ -914,13 +942,17 @@ export const firestoreRouter = router({
       productId: z.string(),
       quantity: z.number().min(1),
       couponCode: z.string().optional(),
-      shippingAddress: z.any(),
+      shippingAddress: shippingAddressSchema,
       paymentMethod: z.string(),
       paymentReceipt: z.string().optional(),
     }))
     .mutation(async ({ input, ctx }) => {
       const verificationToken = generateVerificationToken();
       const couponCode = input.couponCode?.trim().toUpperCase();
+
+      // ✅ جديد: نفس التحقق من مناطق التوصيل المطبَّق بـcreateOrder، قبل أي
+      // لمس للمخزون أو الكوبون.
+      await assertWithinDeliveryZone(extractLatLng(input.shippingAddress));
 
       // ✅ إصلاح تكرار: أصبح "شراء الآن" حالة خاصة (عنصر واحد) من نفس دالة
       // التسعير المستخدمة في createOrder — بدل نسخة كاملة منفصلة من نفس المنطق.

@@ -1,6 +1,6 @@
 import {
   BarChart3, Package, ShoppingBag, Tag, Image as ImageIcon,
-  Star, Percent, Settings, Users, Bell, MessageSquare, ShieldAlert,
+  Star, Percent, Settings, Users, Bell, MessageSquare, ShieldAlert, MapPin,
 } from "lucide-react";
 import type { AdminPermission } from "@shared/adminPermissions";
 
@@ -28,6 +28,7 @@ export const ADMIN_SECTIONS: AdminSection[] = [
   { key: "users", path: "/users", label: "المستخدمين", icon: Users, permission: "users" },
   { key: "notifications", path: "/notifications", label: "الإشعارات", icon: Bell, permission: "notifications" },
   { key: "contactMessages", path: "/contact-messages", label: "رسائل التواصل", icon: MessageSquare, permission: "contactMessages" },
+  { key: "deliveryZones", path: "/delivery-zones", label: "مناطق التوصيل", icon: MapPin, permission: "deliveryZones" },
   // ✅ إضافة (بطلب الأدمن): سجل أخطاء النظام (لوحة + سيرفر + أندرويد).
   // permission: null عمداً — تقني بالكامل وليس قسماً تجارياً كباقي الأقسام
   // أعلاه، فيجب أن يراه أي أدمن بصرف النظر عن صلاحياته التفصيلية (مطابق

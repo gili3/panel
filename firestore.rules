@@ -47,6 +47,40 @@ service cloud.firestore {
       return request.resource.data.diff(resource.data).affectedKeys().hasOnly(keys);
     }
 
+    // ✅ إصلاح (Audit): users/{uid}/addresses كانت allow write بلا أي تحقق
+    // إطلاقاً — على عكس كل مجموعة أخرى بهذا الملف. isValidLatLng المكافئة
+    // بـshared/deliveryZones.ts معرَّفة لكنها لم تكن مستخدَمة هنا أصلاً. الآن:
+    // حقول العنوان النصية مطلوبة بحدود طول معقولة (لا تخزين نصوص ضخمة تعسّفاً)،
+    // isDefault منطقي إجباري. latitude/longitude تسامحية مع سجلات قديمة قد
+    // لا تحوي الحقلين أصلاً (أُضيفا لاحقاً بموديل الأندرويد) — إن وُجدا يجب
+    // أن يكونا 0/0 معاً (لم يُحدَّد موقع) أو زوجاً ضمن المدى الجغرافي الصحيح،
+    // تماماً كـisValidLatLng.
+    // تسامح: سجلات قديمة قد تحوي "name" بدل "fullName" (نفس منطق
+    // Address.displayName بموديل الأندرويد: fullName.ifBlank { name }) —
+    // يكفي وجود أحدهما كنص.
+    function isValidAddress(data) {
+      return
+        (
+          ("fullName" in data && data.fullName is string && data.fullName.size() <= 100) ||
+          ("name" in data && data.name is string && data.name.size() <= 100)
+        ) &&
+        data.phone is string && data.phone.size() <= 30 &&
+        data.city is string && data.city.size() <= 60 &&
+        data.address is string && data.address.size() <= 300 &&
+        data.isDefault is bool &&
+        (
+          !("latitude" in data) && !("longitude" in data) ||
+          (
+            data.latitude is number && data.longitude is number &&
+            (
+              (data.latitude == 0 && data.longitude == 0) ||
+              (data.latitude >= -90 && data.latitude <= 90 &&
+               data.longitude >= -180 && data.longitude <= 180)
+            )
+          )
+        );
+    }
+
     // ─────────────────────────────────────────────────────────────────────
     //  ✅ إصلاح (Audit C-1): تحقق من سعر كل عنصر مقابل مستند المنتج الحيّ.
     //  Firestore Rules لا تدعم loops، لذا نتحقق بفهرس صريح حتى حد أقصى ثابت
@@ -143,6 +177,42 @@ service cloud.firestore {
       return data.shippingCost == expected;
     }
 
+    // ─────────────────────────────────────────────────────────────────────
+    //  ✅ جديد: مناطق التوصيل — التحقق الدقيق (نقطة داخل مضلّع) يحدث فقط على
+    //  السيرفر (delivery-zone-service.ts::assertWithinDeliveryZone، عبر
+    //  Admin SDK الذي يتجاوز هذه القواعد أصلاً). لكن تطبيق الأندرويد يكتب
+    //  مستند الطلب مباشرة عبر Client SDK (placeOrder)، فهذه القواعد هي خط
+    //  الدفاع الحقيقي الوحيد لذلك المسار. تعبير مضلّع حقيقي غير مدعوم بلغة
+    //  Firestore Rules (لا loops)، لذا نستخدم مستطيل إحداثيات تقريبي (bounding
+    //  box) محفوظاً مسبقاً بنفس مستند settings/deliveryZones (يُحدَّثه السيرفر
+    //  عند كل حفظ لمناطق التوصيل من لوحة التحكم) كخط دفاع تقريبي ثانٍ: أي
+    //  نقطة خارج هذا المستطيل مرفوضة قطعاً، وأي نقطة داخله قد تحتاج لاحقاً
+    //  تدقيقاً يدوياً من الأدمن (نادر جداً عملياً لأن معظم المضلّعات القريبة
+    //  من مستطيلها الحاوي). إن لم تُضبط مناطق توصيل بعد (bbox غير موجود)،
+    //  لا قيد جغرافي هنا إطلاقاً (الميزة معطّلة).
+    // ─────────────────────────────────────────────────────────────────────
+    function deliveryZoneBboxValid(data) {
+      return
+        !exists(/databases/$(database)/documents/settings/deliveryZones) ||
+        deliveryZoneBboxValidInner(data, get(/databases/$(database)/documents/settings/deliveryZones).data);
+    }
+
+    function deliveryZoneBboxValidInner(data, settingsData) {
+      let bbox = settingsData.bbox;
+      return
+        !("bbox" in settingsData) || bbox == null ||
+        (
+          "shippingAddress" in data &&
+          data.shippingAddress.latitude is number && data.shippingAddress.longitude is number &&
+          // 0/0 يعني "لا يوجد موقع محدَّد" على مستوى التطبيق — تُرفض بشرط
+          // الحقول الأخرى (fullName/city/address) لتبقى القاعدة صريحة بدل
+          // السماح الصامت بغياب الموقع.
+          !(data.shippingAddress.latitude == 0 && data.shippingAddress.longitude == 0) &&
+          data.shippingAddress.latitude  >= bbox.minLat && data.shippingAddress.latitude  <= bbox.maxLat &&
+          data.shippingAddress.longitude >= bbox.minLng && data.shippingAddress.longitude <= bbox.maxLng
+        );
+    }
+
     // ═══════════════════════════════════════════════════════════════════
     //  users/{userId} — الملف الشخصي
     // ═══════════════════════════════════════════════════════════════════
@@ -216,7 +286,12 @@ service cloud.firestore {
 
       // ── users/{userId}/addresses/{addressId} ─────────────────────────
       match /addresses/{addressId} {
-        allow read, write: if isOwner(userId);
+        allow read, delete: if isOwner(userId);
+        // ✅ إصلاح: راجع isValidAddress() أعلاه — كان بلا أي تحقق إطلاقاً.
+        // create يفرض التحقق الكامل؛ update يسمح أيضاً بتحديثات جزئية (مثل
+        // batch إلغاء isDefault عن باقي العناوين) لأن request.resource.data
+        // يمثّل المستند الناتج كاملاً بعد الدمج، فيُفحَص بنفس الدالة.
+        allow create, update: if isOwner(userId) && isValidAddress(request.resource.data);
       }
 
       // ── users/{userId}/notifications/{notifId} — نظام v2 ─────────────
@@ -443,7 +518,12 @@ service cloud.firestore {
         request.resource.data.subtotal == computedSubtotal(request.resource.data.items) &&
         // ✅ إصلاح (Audit H-2/M-4): الخصم يجب أن يكون صفراً بلا كوبون، أو مرتبطاً
         // فعلياً بكوبون صالح تُحدَّث حالته ضمن نفس معاملة إنشاء هذا الطلب بالذات.
-        discountValid(request.resource.data);
+        discountValid(request.resource.data) &&
+        // ✅ جديد: خط الدفاع التقريبي (bounding box) لمناطق التوصيل — راجع
+        // deliveryZoneBboxValid() أعلاه. التحقق الدقيق (مضلّع فعلي) يتم على
+        // السيرفر لمسار الموقع؛ لتطبيق الأندرويد (Client SDK) هذا هو الفحص
+        // الفعلي الوحيد الممكن هنا.
+        deliveryZoneBboxValid(request.resource.data);
 
       // ✅ لا تحديث ولا حذف من العميل مباشرة إطلاقاً — أي تغيير لحالة الطلب
       // (تم الدفع/تم الشحن/إلغاء...) يجب أن يمر فقط عبر لوحة تحكم الموقع (Admin SDK)

@@ -18,7 +18,7 @@ import {
 import { useState, useEffect, useRef } from "react";
 import { trpc } from "@/lib/trpc";
 import { toast } from "sonner";
-import { getOrderStatusConfig } from "@/lib/orderStatus";
+import { getOrderStatusConfig, getPaymentStatusConfig, ORDER_STATUS_OPTIONS, PAYMENT_STATUS_OPTIONS } from "@/lib/orderStatus";
 import { formatNumber } from "@/lib/formatters";
 import { uploadMultipleImages, deleteImageFromStorage, compressImage, uploadImageToStorage } from "@/lib/imageUpload";
 import { PRESET_THEMES, getContrastRatio, getReadableTextColor, deriveDarkTriplet } from "@/lib/themePresets";
@@ -83,6 +83,8 @@ interface OrderStatusDialogProps {
     fullName?: string; name?: string; phone?: string; city?: string;
     address?: string; latitude?: number; longitude?: number;
   } | null;
+  // ✅ جديد: عناصر الطلب — لعرضها بالصورة/الاسم/الكمية/السعر داخل النافذة
+  items?: Array<{ productId?: string; name: string; quantity: number; price: number; image?: string }>;
   onSave: (status: string, paymentStatus: string) => void;
   onClose: () => void;
 }
@@ -103,57 +105,167 @@ function StatusBadge({ status }: { status: string }) {
   );
 }
 
-function OrderStatusDialog({ orderId, currentStatus, currentPaymentStatus, paymentReceipt, shippingAddress, onSave, onClose }: OrderStatusDialogProps) {
+// شارة حالة الدفع — مصدر الألوان/التسميات موحّد عبر lib/orderStatus.ts (منفصلة
+// عمداً عن StatusBadge/حالة الطلب أعلاه، راجع التعليق بـlib/colors.ts).
+function PaymentStatusBadge({ status }: { status: string }) {
+  const { label, style } = getPaymentStatusConfig(status);
+  return <span style={style} className="px-2 py-1 rounded text-xs font-semibold">{label}</span>;
+}
+
+// ✅ إعادة تنظيم: عناصر الطلب (صورة/اسم/كمية/سعر الوحدة/الإجمالي) لم تكن
+// تُعرض إطلاقاً بنافذة تفاصيل/تحديث الطلب من لوحة التحكم — فقط بخريطة
+// الطلبات (بلا صورة). الآن تُعرض هنا من order.items مباشرة (نفس المصدر
+// المحفوظ وقت الطلب عبر runOrderPricingTransaction بالسيرفر).
+function OrderItemsList({ items }: { items: Array<{ productId?: string; name: string; quantity: number; price: number; image?: string }> }) {
+  if (!items?.length) return null;
+  return (
+    <div className="rounded-lg border divide-y">
+      {items.map((item, i) => (
+        <div key={item.productId || i} className="flex items-center gap-3 px-3 py-2 text-sm">
+          {item.image ? (
+            <img src={item.image} alt={item.name} className="w-10 h-10 rounded object-cover shrink-0 bg-muted" />
+          ) : (
+            <div className="w-10 h-10 rounded bg-muted shrink-0 flex items-center justify-center text-muted-foreground">
+              <ImageIcon className="w-4 h-4" />
+            </div>
+          )}
+          <div className="flex-1 min-w-0">
+            <p className="truncate font-medium">{item.name}</p>
+            <p className="text-xs text-muted-foreground">{formatNumber(item.price)} ج.س × {item.quantity}</p>
+          </div>
+          <span className="font-semibold whitespace-nowrap">{formatNumber(item.price * item.quantity)} ج.س</span>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+// ✅ إعادة تنظيم كاملة لنافذة "تفاصيل/تحديث الطلب": تجمع الآن حالة الطلب +
+// حالة الدفع + عناصر الطلب (مع الصورة) + تعديل العنوان/الهاتف (يُزامَن مع
+// Firebase عبر updateOrderAddress بالسيرفر) في مكان واحد بدل بيانات ناقصة.
+function OrderStatusDialog({ orderId, currentStatus, currentPaymentStatus, paymentReceipt, shippingAddress, items, onSave, onClose }: OrderStatusDialogProps) {
   const [status, setStatus] = useState(currentStatus);
   const [paymentStatus, setPaymentStatus] = useState(currentPaymentStatus);
+  const [editingAddress, setEditingAddress] = useState(false);
+  const [addrForm, setAddrForm] = useState({
+    fullName: shippingAddress?.fullName || shippingAddress?.name || "",
+    phone: shippingAddress?.phone || "",
+    city: shippingAddress?.city || "",
+    address: shippingAddress?.address || "",
+    latitude: shippingAddress?.latitude,
+    longitude: shippingAddress?.longitude,
+  });
 
   useEffect(() => {
     setStatus(currentStatus);
     setPaymentStatus(currentPaymentStatus);
   }, [currentStatus, currentPaymentStatus]);
 
+  const utils = trpc.useUtils();
+  const updateOrderAddress = trpc.firestore.updateOrderAddress.useMutation({
+    onSuccess: () => {
+      toast.success("تم تحديث بيانات التوصيل وحفظها على حساب العميل");
+      utils.firestore.getAllOrdersAdmin.invalidate();
+      setEditingAddress(false);
+    },
+    onError: (err) => toast.error(err.message || "تعذّر تحديث العنوان"),
+  });
+
   const hasLocation = !!(shippingAddress?.latitude && shippingAddress?.longitude);
 
   return (
-    <DialogContent>
+    <DialogContent className="max-h-[90vh] overflow-y-auto">
       <DialogHeader>
-        <DialogTitle>تحديث حالة الطلب #{orderId.slice(0, 8)}</DialogTitle>
+        <DialogTitle>تفاصيل الطلب #{orderId.slice(0, 8)}</DialogTitle>
       </DialogHeader>
       <div className="space-y-4">
-        {shippingAddress && (shippingAddress.address || shippingAddress.city) && (
-          <div className="rounded-lg border p-3 text-sm space-y-1">
-            <p className="font-semibold flex items-center gap-2">
-              <MapPin className="w-4 h-4" /> عنوان التوصيل
-            </p>
-            <p>{shippingAddress.fullName || shippingAddress.name || "-"} — {shippingAddress.phone || "-"}</p>
-            <p className="text-muted-foreground">{shippingAddress.city}{shippingAddress.city && shippingAddress.address ? " — " : ""}{shippingAddress.address}</p>
-            {hasLocation ? (
-              <a
-                href={`https://www.google.com/maps?q=${shippingAddress!.latitude},${shippingAddress!.longitude}`}
-                target="_blank"
-                rel="noreferrer"
-                className="text-primary hover:underline text-sm flex items-center gap-1 pt-1"
-              >
-                <MapPin className="w-3.5 h-3.5" /> فتح الموقع في خرائط جوجل
-              </a>
+        {shippingAddress && (
+          <div className="rounded-lg border p-3 text-sm space-y-2">
+            <div className="flex items-center justify-between">
+              <p className="font-semibold flex items-center gap-2">
+                <MapPin className="w-4 h-4" /> عنوان التوصيل
+              </p>
+              <Button size="sm" variant="ghost" onClick={() => setEditingAddress((v) => !v)}>
+                {editingAddress ? "إلغاء التعديل" : "تعديل"}
+              </Button>
+            </div>
+
+            {!editingAddress ? (
+              <>
+                <p>{shippingAddress.fullName || shippingAddress.name || "-"} — {shippingAddress.phone || "-"}</p>
+                <p className="text-muted-foreground">{shippingAddress.city}{shippingAddress.city && shippingAddress.address ? " — " : ""}{shippingAddress.address}</p>
+                {hasLocation ? (
+                  <a
+                    href={`https://www.google.com/maps?q=${shippingAddress!.latitude},${shippingAddress!.longitude}`}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="text-primary hover:underline text-sm flex items-center gap-1 pt-1"
+                  >
+                    <MapPin className="w-3.5 h-3.5" /> فتح الموقع في خرائط جوجل
+                  </a>
+                ) : (
+                  <p className="text-xs text-muted-foreground pt-1">لم يحدّد العميل الموقع على الخريطة</p>
+                )}
+              </>
             ) : (
-              <p className="text-xs text-muted-foreground pt-1">لم يحدّد العميل الموقع على الخريطة</p>
+              <div className="space-y-2">
+                <Input placeholder="الاسم الكامل" value={addrForm.fullName} onChange={(e) => setAddrForm((f) => ({ ...f, fullName: e.target.value }))} />
+                <Input placeholder="رقم الهاتف" dir="ltr" value={addrForm.phone} onChange={(e) => setAddrForm((f) => ({ ...f, phone: e.target.value }))} />
+                <Input placeholder="المدينة" value={addrForm.city} onChange={(e) => setAddrForm((f) => ({ ...f, city: e.target.value }))} />
+                <Textarea placeholder="العنوان التفصيلي" value={addrForm.address} onChange={(e) => setAddrForm((f) => ({ ...f, address: e.target.value }))} />
+                <p className="text-xs text-muted-foreground">
+                  رقم الهاتف يُحدَّث تلقائياً على حساب العميل بقاعدة البيانات، ويُضاف/يُحدَّث كعنوان
+                  محفوظ لديه (بلا تكرار إن كان مطابقاً لعنوان موجود مسبقاً).
+                </p>
+                <Button
+                  size="sm"
+                  disabled={updateOrderAddress.isPending}
+                  onClick={() => updateOrderAddress.mutate({
+                    orderId,
+                    fullName: addrForm.fullName,
+                    phone: addrForm.phone,
+                    city: addrForm.city,
+                    address: addrForm.address,
+                    latitude: addrForm.latitude,
+                    longitude: addrForm.longitude,
+                  })}
+                >
+                  {updateOrderAddress.isPending ? <Loader2 className="w-4 h-4 ml-2 animate-spin" /> : null}
+                  حفظ العنوان
+                </Button>
+              </div>
             )}
           </div>
         )}
-        <div>
-          <label htmlFor="order-status" className="text-sm font-semibold">حالة الطلب</label>
-          <Select value={status} onValueChange={setStatus}>
-            <SelectTrigger id="order-status"><SelectValue /></SelectTrigger>
-            <SelectContent>
-              <SelectItem value="pending">قيد الانتظار</SelectItem>
-              <SelectItem value="paid">تم الدفع</SelectItem>
-              <SelectItem value="shipped">خرج للتوصيل</SelectItem>
-              <SelectItem value="delivered">تم التسليم</SelectItem>
-              <SelectItem value="cancelled">ملغى</SelectItem>
-            </SelectContent>
-          </Select>
+
+        {/* ✅ عناصر الطلب: صورة + اسم + كمية + سعر الوحدة + الإجمالي، من order.items */}
+        <OrderItemsList items={items || []} />
+
+        <div className="grid grid-cols-2 gap-3">
+          <div>
+            <label htmlFor="order-status" className="text-sm font-semibold">حالة الطلب</label>
+            <Select value={status} onValueChange={setStatus}>
+              <SelectTrigger id="order-status"><SelectValue /></SelectTrigger>
+              <SelectContent>
+                {ORDER_STATUS_OPTIONS.map((o) => (
+                  <SelectItem key={o.value} value={o.value}>{o.label}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+          <div>
+            <label htmlFor="order-payment-status" className="text-sm font-semibold">حالة الدفع</label>
+            <Select value={paymentStatus} onValueChange={setPaymentStatus}>
+              <SelectTrigger id="order-payment-status"><SelectValue /></SelectTrigger>
+              <SelectContent>
+                {PAYMENT_STATUS_OPTIONS.map((o) => (
+                  <SelectItem key={o.value} value={o.value}>{o.label}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
         </div>
+
         {paymentReceipt && (
           <div>
             {/* ✅ إصلاح (Accessibility): كان <label> هنا بلا أي عنصر تحكم مرتبط
@@ -176,20 +288,7 @@ function OrderStatusDialog({ orderId, currentStatus, currentPaymentStatus, payme
             )}
           </div>
         )}
-        <div>
-          <label htmlFor="order-payment-status" className="text-sm font-semibold">حالة الدفع</label>
-          <Select value={paymentStatus} onValueChange={setPaymentStatus}>
-            <SelectTrigger id="order-payment-status"><SelectValue /></SelectTrigger>
-            <SelectContent>
-              <SelectItem value="unpaid">غير مدفوع</SelectItem>
-              {/* ✅ إصلاح: قيمة جديدة تعكس الحالة الافتراضية الآن عند رفع إيصال
-                  (بانتظار مراجعة الأدمن يدوياً بدل تأكيد "مدفوع" تلقائياً) */}
-              <SelectItem value="pending_review">بانتظار المراجعة</SelectItem>
-              <SelectItem value="paid">مدفوع</SelectItem>
-              <SelectItem value="failed">فشل الدفع</SelectItem>
-            </SelectContent>
-          </Select>
-        </div>
+
         <div className="flex gap-2">
           <Button className="flex-1" onClick={() => onSave(status, paymentStatus)}>حفظ</Button>
           <Button variant="outline" className="flex-1" onClick={onClose}>إلغاء</Button>
@@ -349,7 +448,7 @@ export default function AdminDashboard() {
   const [showCouponDialog, setShowCouponDialog] = useState(false);
   const [isEditingCoupon, setIsEditingCoupon] = useState(false);
 
-  const [activeOrderDialog, setActiveOrderDialog] = useState<{ id: string; status: string; paymentStatus: string; receipt?: string; shippingAddress?: any } | null>(null);
+  const [activeOrderDialog, setActiveOrderDialog] = useState<{ id: string; status: string; paymentStatus: string; receipt?: string; shippingAddress?: any; items?: any[] } | null>(null);
   const [orderStatusFilter, setOrderStatusFilter] = useState<string>("all");
 
   const [settingsForm, setSettingsForm] = useState({
@@ -858,7 +957,9 @@ export default function AdminDashboard() {
   };
 
   const handleDeleteOrder = (id: string) => {
-    if (window.confirm(`هل أنت متأكد من حذف الطلب؟ لا يمكن التراجع عن هذا الإجراء.`)) {
+    // ✅ توضيح: الحذف الآن يُرجع مخزون المنتجات تلقائياً (إن لم يكن الطلب
+    // ملغىً أصلاً أو أُرجع مخزونه مسبقاً) — راجع deleteOrder بالسيرفر.
+    if (window.confirm(`هل أنت متأكد من حذف الطلب؟ سيُعاد مخزون منتجاته تلقائياً إن لم يكن قد أُرجع من قبل. لا يمكن التراجع عن هذا الإجراء.`)) {
       deleteOrder.mutate({ id });
     }
   };
@@ -1434,19 +1535,32 @@ export default function AdminDashboard() {
                       <TableHeader>
                         <TableRow>
                           <TableHead>رقم الطلب</TableHead>
+                          <TableHead>العميل</TableHead>
+                          <TableHead>الهاتف</TableHead>
                           <TableHead>الحالة</TableHead>
-                          <TableHead>المبلغ</TableHead>
-                          <TableHead>العنوان</TableHead>
-                          <TableHead>التاريخ</TableHead>
+                          <TableHead>العنوان / المدينة</TableHead>
+                          <TableHead>التاريخ / الإجمالي</TableHead>
                           <TableHead>الإجراءات</TableHead>
                         </TableRow>
                       </TableHeader>
                       <TableBody>
                         {allOrders.map((order: any) => (
                           <TableRow key={order.id}>
-                            <TableCell className="font-semibold">{order.orderNumber || "-"}</TableCell>
-                            <TableCell><StatusBadge status={order.status} /></TableCell>
-                            <TableCell>{formatNumber(order.total ?? 0)} ج.س</TableCell>
+                            <TableCell className="font-semibold whitespace-nowrap">{order.orderNumber || "-"}</TableCell>
+                            <TableCell className="max-w-[140px] truncate">
+                              {order.shippingAddress?.fullName || order.shippingAddress?.name || "-"}
+                            </TableCell>
+                            <TableCell className="whitespace-nowrap" dir="ltr">
+                              {order.shippingAddress?.phone || "-"}
+                            </TableCell>
+                            {/* ✅ دمج حالة الطلب وحالة الدفع بعمود واحد بدل انتشارهما — كانت حالة
+                                الدفع غير ظاهرة إطلاقاً بجدول الطلبات (فقط عند فتح تفاصيل الطلب). */}
+                            <TableCell>
+                              <div className="flex flex-col gap-1 items-start">
+                                <StatusBadge status={order.status} />
+                                <PaymentStatusBadge status={order.paymentStatus || "unpaid"} />
+                              </div>
+                            </TableCell>
                             <TableCell className="max-w-[180px]">
                               <div className="truncate text-sm text-muted-foreground">
                                 {order.shippingAddress?.city}
@@ -1464,12 +1578,15 @@ export default function AdminDashboard() {
                                 </a>
                               ) : null}
                             </TableCell>
-                            <TableCell>
-                              {order.createdAt ? (
-                                new Date(order.createdAt).toLocaleDateString('ar-EG-u-nu-latn', {
-                                  year: 'numeric', month: 'short', day: 'numeric', calendar: 'gregory'
-                                })
-                              ) : "-"}
+                            <TableCell className="whitespace-nowrap">
+                              <div>
+                                {order.createdAt ? (
+                                  new Date(order.createdAt).toLocaleDateString('ar-EG-u-nu-latn', {
+                                    year: 'numeric', month: 'short', day: 'numeric', calendar: 'gregory'
+                                  })
+                                ) : "-"}
+                              </div>
+                              <div className="text-sm text-muted-foreground">{formatNumber(order.total ?? 0)} ج.س</div>
                             </TableCell>
                             <TableCell>
                               <div className="flex gap-1">
@@ -1484,6 +1601,7 @@ export default function AdminDashboard() {
                                         paymentStatus: order.paymentStatus || "unpaid",
                                         receipt: order.paymentReceipt,
                                         shippingAddress: order.shippingAddress || null,
+                                        items: order.items || [],
                                       })}
                                     >
                                       <Edit2 className="w-4 h-4" />
@@ -1496,6 +1614,7 @@ export default function AdminDashboard() {
                                       currentPaymentStatus={activeOrderDialog.paymentStatus}
                                       paymentReceipt={activeOrderDialog.receipt}
                                       shippingAddress={activeOrderDialog.shippingAddress}
+                                      items={activeOrderDialog.items}
                                       onSave={(status, paymentStatus) => handleSaveOrderStatus(order.id, status, paymentStatus)}
                                       onClose={() => setActiveOrderDialog(null)}
                                     />

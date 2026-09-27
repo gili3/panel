@@ -11,6 +11,7 @@ import { checkRateLimit, clientKey } from "./_core/rateLimit";
 import { syncProductToIndex, removeProductFromIndex, resyncProductsStock } from "./algolia-service";
 import { assertWithinDeliveryZone } from "./delivery-zone-service";
 import type { Product } from "@shared/types";
+import { toIsoStringSafe } from "./date-utils";
 
 // ✅ إصلاح: المسارات التي تُرجع منتجات كانت تعتمد على استنتاج ضمني من
 // doc.data() (أو من query معلَّم بـ`any`)، فيصل النوع للعميل غامضاً ويمنع
@@ -54,20 +55,8 @@ function extractLatLng(shippingAddress: z.infer<typeof shippingAddressSchema>): 
   return { lat: latitude, lng: longitude };
 }
 
-// ✅ إصلاح: بعض المستندات (خصوصاً ما يُكتب مباشرة من تطبيق الأندرويد عبر
-// Client SDK) قد يكون فيها createdAt/updatedAt مفقوداً أو غير صالح كتاريخ.
-// new Date(undefined).toISOString() يرمي RangeError: "Invalid time value"
-// ويكسر طلب getOrders/getOrder بالكامل لهذا المستخدم. هذه الدالة تتعامل
-// بأمان مع كل الحالات الممكنة وتُرجع null بدلاً من الانهيار.
-function toIsoStringSafe(value: unknown): string | null {
-  if (!value) return null;
-  if (typeof value === "object" && value !== null && "toDate" in value && typeof (value as any).toDate === "function") {
-    const d = (value as any).toDate();
-    return isNaN(d.getTime()) ? null : d.toISOString();
-  }
-  const d = new Date(value as any);
-  return isNaN(d.getTime()) ? null : d.toISOString();
-}
+// ✅ toIsoStringSafe الآن بـ./date-utils.ts (مشتركة مع delivery-zone-router.ts
+// بدل تكرارها) — راجع التعليق هناك لشرح سبب وجودها.
 
 // ✅ إصلاح: يمنع استخدام نفس الكوبون أكثر من مرة من نفس المستخدم عبر مسار
 // الموقع (createOrder/createDirectOrder) — نفس الحماية الموجودة أصلاً بقواعد
@@ -1299,7 +1288,12 @@ export const firestoreRouter = router({
     .input(z.object({
       id: z.string(),
       status: z.enum(['pending', 'paid', 'shipped', 'delivered', 'cancelled']),
-      paymentStatus: z.enum(['unpaid', 'paid', 'failed']).optional(),
+      // ✅ إصلاح: كانت "pending_review" مفقودة من هذا الـenum رغم أنها تُكتب
+      // فعلياً بقاعدة البيانات (createOrder/createDirectOrder عند رفع إيصال،
+      // وupdateOrderReceipt أدناه) وموجودة بالفعل ضمن خيارات الواجهة
+      // (OrderStatusDialog) — أي محاولة حفظها من لوحة التحكم كانت تفشل بخطأ
+      // تحقق صامت من tRPC (BAD_REQUEST) بلا أي تفسير واضح للأدمن.
+      paymentStatus: z.enum(['unpaid', 'pending_review', 'paid', 'failed']).optional(),
     }))
     .mutation(async ({ input, ctx }) => {
       const { id, ...data } = input;
@@ -1367,7 +1361,56 @@ export const firestoreRouter = router({
   deleteOrder: adminPermission("orders")
     .input(z.object({ id: z.string() }))
     .mutation(async ({ input, ctx }) => {
-      await adminDb.collection("orders").doc(input.id).delete();
+      // ✅ إصلاح حرج: كان حذف الطلب لا يُرجع المخزون المخصوم وقت إنشائه
+      // إطلاقاً — بعكس الإلغاء (updateOrderStatus) الذي يُرجعه بشكل صحيح.
+      // فكان حذف أي طلب (خطأ إدخال، طلب مكرر...) يُسبّب نفس فقدان المخزون
+      // التراكمي الذي أُصلح سابقاً للإلغاء. الآن نفس منطق الإرجاع بالضبط:
+      // ضمن transaction ذرّية واحدة، نُرجع الكمية لكل عنصر *فقط* إذا لم يكن
+      // الطلب "ملغى" أصلاً (مخزونه أُرجع حينها) ولم يسبق إرجاعه
+      // (orderData.stockRestored) — يمنع إرجاعاً مضاعفاً سواء من استدعاء
+      // مزدوج لهذا الإجراء نفسه أو من إلغاء سابق للطلب قبل حذفه.
+      const { orderData } = await adminDb.runTransaction(async (tx) => {
+        const orderRef = adminDb.collection("orders").doc(input.id);
+        const orderDoc = await tx.get(orderRef);
+        if (!orderDoc.exists) {
+          throw new TRPCError({ code: "NOT_FOUND", message: "الطلب غير موجود" });
+        }
+        const orderData = orderDoc.data()!;
+        const wasCancelled = orderData.status === 'cancelled';
+        const alreadyRestored = orderData.stockRestored === true;
+        const shouldRestore = !wasCancelled && !alreadyRestored && Array.isArray(orderData.items);
+
+        let productRefs: FirebaseFirestore.DocumentReference[] = [];
+        let productDocs: FirebaseFirestore.DocumentSnapshot[] = [];
+        if (shouldRestore) {
+          productRefs = orderData.items.map((item: any) => adminDb.collection("products").doc(item.productId));
+          productDocs = await Promise.all(productRefs.map((ref) => tx.get(ref)));
+        }
+
+        // كل عمليات الكتابة (تحديث المخزون ثم الحذف) بعد كل القراءات أعلاه —
+        // قيد Firestore على الـtransactions.
+        if (shouldRestore) {
+          productDocs.forEach((doc, idx) => {
+            if (!doc.exists) return; // المنتج قد يكون حُذف لاحقاً — لا يوجد ما نُرجع له
+            const item = orderData.items[idx];
+            const currentStock = doc.data()?.stock ?? 0;
+            tx.update(productRefs[idx], {
+              stock: currentStock + (item.quantity || 0),
+              updatedAt: new Date(),
+            });
+          });
+        }
+        tx.delete(orderRef);
+
+        return { orderData };
+      });
+
+      // ✅ Algolia: نفس إصلاح updateOrderStatus — إعادة مزامنة المنتجات المتأثرة
+      // بعد نجاح إرجاع المخزون (إن حدث).
+      if (Array.isArray(orderData.items)) {
+        resyncProductsStock(orderData.items.map((item: any) => item.productId)).catch(() => {});
+      }
+
       return { success: true };
     }),
 
@@ -1389,12 +1432,115 @@ export const firestoreRouter = router({
         throw new TRPCError({ code: "FORBIDDEN", message: "غير مصرح لك بهذا الإجراء" });
       }
       
+      // ✅ إصلاح حرج (مطابق لنفس إصلاح createOrder/createDirectOrder): كان
+      // إعادة رفع الإيصال هنا يضبط "paid" مباشرة بلا أي تحقق فعلي من محتوى
+      // الصورة — يعني أن أي عميل يقدر يُعلّم طلبه "مدفوع" بمجرد رفع أي ملف،
+      // بصرف النظر عن اعتماد الأدمن. الآن كل رفع/إعادة رفع لإيصال يضعه
+      // "بانتظار المراجعة" حصراً، ولا يتحوّل لـ"مدفوع" إلا عبر updateOrderStatus
+      // (أدمن يملك صلاحية "orders" فقط).
       await orderRef.update({
         paymentReceipt: input.paymentReceipt,
-        paymentStatus: "paid",
+        paymentStatus: "pending_review",
         updatedAt: new Date(),
       });
       
+      return { success: true };
+    }),
+
+  // ✅ جديد: تعديل عنوان/هاتف طلب من لوحة التحكم (تبويب "الطلبات") مع
+  // مزامنة حقيقية بدل تعديل مستند الطلب فقط بمعزل عن بقية بيانات العميل:
+  //  1) يُحدَّث هاتف صاحب الطلب على users/{userId}.phone إن اختلف — حتى
+  //     يبقى رقم الهاتف على الطلب مطابقاً لرقم المستخدم بقاعدة البيانات.
+  //  2) يُحدَّث/يُنشأ سجل العنوان بدفتر عناوين العميل (users/{userId}/addresses)
+  //     — عبر تطابق (مدينة + عنوان تفصيلي + هاتف) بعد تطبيع بسيط، بدل إنشاء
+  //     سجل جديد في كل مرة (يمنع تكرار العناوين).
+  //  3) الإحداثيات تُقبل فقط إن كانت رقمين ضمن المدى الجغرافي الصالح وليسا
+  //     (0,0) معاً — غير ذلك تُرفض العملية كاملة قبل أي كتابة.
+  updateOrderAddress: adminPermission("orders")
+    .input(z.object({
+      orderId: z.string(),
+      fullName: z.string().trim().min(1, "الاسم مطلوب"),
+      phone: z.string().trim().min(1, "رقم الهاتف مطلوب"),
+      city: z.string().trim().min(1, "المدينة مطلوبة"),
+      address: z.string().trim().min(1, "العنوان التفصيلي مطلوب"),
+      latitude: z.number().optional(),
+      longitude: z.number().optional(),
+    }))
+    .mutation(async ({ input }) => {
+      const { orderId, latitude, longitude, ...fields } = input;
+
+      // ✅ تحقق الإحداثيات قبل اعتمادها: إن أُرسل أحدهما فقط، أو كانا خارج
+      // المدى الجغرافي الصالح، تُرفض العملية بالكامل — لا نكتب عنواناً
+      // بموقع غير موثوق على الخريطة (خريطة التوصيل/دبابيس الطلبات تعتمد عليه).
+      let coords: { latitude: number; longitude: number } | null = null;
+      const hasAnyCoord = latitude !== undefined || longitude !== undefined;
+      if (hasAnyCoord) {
+        if (latitude === undefined || longitude === undefined) {
+          throw new TRPCError({ code: "BAD_REQUEST", message: "أدخل خط العرض وخط الطول معاً أو لا تُدخل أياً منهما" });
+        }
+        const valid =
+          Number.isFinite(latitude) && Number.isFinite(longitude) &&
+          latitude >= -90 && latitude <= 90 && longitude >= -180 && longitude <= 180 &&
+          !(latitude === 0 && longitude === 0);
+        if (!valid) {
+          throw new TRPCError({ code: "BAD_REQUEST", message: "إحداثيات غير صالحة" });
+        }
+        coords = { latitude, longitude };
+      }
+
+      const orderRef = adminDb.collection("orders").doc(orderId);
+      const orderDoc = await orderRef.get();
+      if (!orderDoc.exists) {
+        throw new TRPCError({ code: "NOT_FOUND", message: "الطلب غير موجود" });
+      }
+      const orderData = orderDoc.data()!;
+
+      await orderRef.update({
+        shippingAddress: {
+          ...(orderData.shippingAddress ?? {}),
+          ...fields,
+          ...(coords ?? {}),
+        },
+        updatedAt: new Date(),
+      });
+
+      // مزامنة هاتف المستخدم + دفتر عناوينه — أفضل جهد (best-effort)، لا تُفشل
+      // تعديل الطلب نفسه إن تعذّرت (مثال: حساب المستخدم محذوف).
+      if (orderData.userId) {
+        const userRef = adminDb.collection("users").doc(orderData.userId);
+        try {
+          const userDoc = await userRef.get();
+          if (userDoc.exists && userDoc.data()?.phone !== fields.phone) {
+            await userRef.update({ phone: fields.phone, updatedAt: new Date() });
+          }
+
+          const norm = (s: string) => s.trim().toLowerCase().replace(/\s+/g, " ");
+          const addressesRef = userRef.collection("addresses");
+          const existingSnap = await addressesRef.get();
+          const duplicate = existingSnap.docs.find((doc) => {
+            const d = doc.data();
+            return norm(d.city || "") === norm(fields.city) &&
+              norm(d.address || "") === norm(fields.address) &&
+              norm(d.phone || "") === norm(fields.phone);
+          });
+
+          const addressPayload = {
+            fullName: fields.fullName,
+            phone: fields.phone,
+            city: fields.city,
+            address: fields.address,
+            ...(coords ?? {}),
+          };
+          if (duplicate) {
+            await duplicate.ref.update({ ...addressPayload, updatedAt: new Date() });
+          } else {
+            await addressesRef.add({ ...addressPayload, isDefault: false, createdAt: new Date() });
+          }
+        } catch (err) {
+          console.error("[updateOrderAddress] تعذّرت مزامنة هاتف/عناوين المستخدم:", err);
+        }
+      }
+
       return { success: true };
     }),
 

@@ -1,33 +1,33 @@
-// ELEVEN STORE — لوحة التحكم: مناطق التوصيل (محرِّر مضلّعات) + خريطة الطلبات المجمّعة
+// ELEVEN STORE — لوحة التحكم: مناطق التوصيل (محرِّر مضلّعات)
 // ─────────────────────────────────────────────────────────────────────────
 // ✅ جديد: يستخدم Leaflet + OpenStreetMap (محمَّلة عبر CDN بـclient/index.html
 // كسكربت عام window.L) بدل Google Maps JS — لا مفتاح API مُفعَّل حالياً
 // بجانب الموقع (فقط بتطبيق الأندرويد)، وLeaflet/OSM لا يحتاجان أي مفتاح.
-import { useEffect, useMemo, useRef, useState } from "react";
+// ✅ إعادة تنظيم: خريطة الطلبات المجمّعة انتقلت لصفحة مستقلة "خريطة التوصيل"
+// (client/src/pages/DeliveryMap.tsx على /delivery-map) — هذه الصفحة أصبحت
+// مخصصة لتحرير مضلّعات مناطق التوصيل فقط، بدل خلط أداة الأدمن الإدارية
+// (رسم المناطق) مع شاشة المتابعة اللحظية التي يحتاجها الموصّل أثناء العمل.
+import { useEffect, useRef, useState } from "react";
 import { trpc } from "@/lib/trpc";
 import { toast } from "sonner";
+import { Link } from "wouter";
 import AdminGuard from "@/components/AdminGuard";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Switch } from "@/components/ui/switch";
 import { Badge } from "@/components/ui/badge";
-import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import {
   AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent,
   AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
-import { Loader2, MapPin, Plus, Trash2, Undo2, Save, X, ShieldAlert } from "lucide-react";
+import { Loader2, MapPin, Plus, Trash2, Undo2, Save, X } from "lucide-react";
 import type { DeliveryZone, LatLng } from "@shared/deliveryZones";
+import { KHARTOUM_CENTER, TILE_URL, TILE_ATTRIBUTION } from "@/lib/mapConstants";
 
 // window.L محمَّل عبر <script> عادي بـindex.html (راجع التعليق أعلاه) —
 // لا يوجد نوع TS رسمي مثبَّت هنا (@types/leaflet)، لذا `any` مقصودة.
 declare const L: any;
-
-// افتراضي: مركز الخرطوم — نفس نقطة البداية المستخدمة بتطبيق الأندرويد (LocationPicker.kt)
-const KHARTOUM_CENTER: [number, number] = [15.5007, 32.5599];
-const TILE_URL = "https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png";
-const TILE_ATTRIBUTION = "&copy; OpenStreetMap contributors";
 
 // ─────────────────────────────────────────────────────────────────────────
 //  محرِّر مضلّع واحد: نقرة على الخريطة = إضافة نقطة جديدة بالترتيب
@@ -297,148 +297,22 @@ function DeliveryZonesManager() {
   );
 }
 
-// ─────────────────────────────────────────────────────────────────────────
-//  خريطة مجمّعة (Cluster Map): كل الطلبات النشطة (pending/paid/shipped) دفعة واحدة
-// ─────────────────────────────────────────────────────────────────────────
-const STATUS_COLOR: Record<string, string> = {
-  pending: "#f59e0b",
-  paid: "#3b82f6",
-  shipped: "#8b5cf6",
-};
-const STATUS_LABEL: Record<string, string> = {
-  pending: "قيد الانتظار",
-  paid: "تم الدفع",
-  shipped: "خرج للتوصيل",
-};
-
-function OrdersClusterMap({ canViewOrders }: { canViewOrders: boolean }) {
-  // ✅ تحديث دوري كل 30 ثانية — لوحة تحكم مفتوحة طوال الوقت (شاشة العمليات)
-  // تعكس طلبات جديدة/متغيّرة الحالة بلا حاجة لتحديث الصفحة يدوياً.
-  // ✅ إصلاح: هذا الاستعلام يتطلّب صلاحية "orders" على السيرفر (وليس
-  // "deliveryZones" التي تحمي الصفحة كلها) — أدمن يملك "deliveryZones" فقط
-  // كان يفتح هذا التبويب ويحصل على FORBIDDEN بصمت (لا معالجة خطأ هنا ولا
-  // بـmain.tsx)، فتظهر له خريطة فاضية بلا أي تفسير. الآن enabled: canViewOrders
-  // يمنع حتى إطلاق الطلب أصلاً، ونعرض رسالة صريحة بدلاً من الخريطة.
-  const { data: locations, isLoading, error } = trpc.deliveryZones.getActiveOrderLocations.useQuery(undefined, {
-    refetchInterval: 30_000,
-    enabled: canViewOrders,
-  });
-  const { data: zones } = trpc.deliveryZones.getZones.useQuery();
-
-  const containerRef = useRef<HTMLDivElement | null>(null);
-  const mapRef = useRef<any>(null);
-  const layerRef = useRef<any>(null);
-
-  useEffect(() => {
-    if (!containerRef.current || mapRef.current || typeof L === "undefined") return;
-    const map = L.map(containerRef.current).setView(KHARTOUM_CENTER, 11);
-    L.tileLayer(TILE_URL, { attribution: TILE_ATTRIBUTION, maxZoom: 19 }).addTo(map);
-    mapRef.current = map;
-    return () => {
-      map.remove();
-      mapRef.current = null;
-    };
-  }, []);
-
-  useEffect(() => {
-    const map = mapRef.current;
-    if (!map || typeof L === "undefined") return;
-    layerRef.current?.remove();
-    const group = L.layerGroup().addTo(map);
-
-    (zones ?? []).forEach(z => {
-      if (z.polygon.length >= 3) {
-        L.polygon(z.polygon.map(p => [p.lat, p.lng]), {
-          color: z.isActive ? "#16a34a" : "#9ca3af", weight: 1, dashArray: "4 4", fillOpacity: 0.04,
-        }).bindTooltip(z.name).addTo(group);
-      }
-    });
-
-    (locations ?? []).forEach(o => {
-      const color = STATUS_COLOR[o.status] ?? "#dc2626";
-      L.circleMarker([o.lat, o.lng], {
-        radius: 8, color, fillColor: color, fillOpacity: 0.9, weight: 2,
-      })
-        .bindPopup(
-          `<div style="min-width:140px">` +
-            `<b>#${o.orderNumber}</b><br/>` +
-            `${o.customerName || "-"}<br/>` +
-            `${o.phone || ""}<br/>` +
-            `${o.city || ""}<br/>` +
-            `${STATUS_LABEL[o.status] ?? o.status} — ${o.total} ج.س` +
-          `</div>`
-        )
-        .addTo(group);
-    });
-
-    layerRef.current = group;
-  }, [locations, zones]);
-
-  return (
-    <Card>
-      <CardHeader>
-        <CardTitle className="flex items-center gap-2">
-          <MapPin className="w-4 h-4" /> خريطة الطلبات النشطة ({locations?.length ?? 0})
-        </CardTitle>
-      </CardHeader>
-      <CardContent className="space-y-3">
-        {!canViewOrders || error ? (
-          <div className="flex flex-col items-center gap-2 py-10 text-center text-muted-foreground">
-            <ShieldAlert className="w-6 h-6" />
-            <p className="text-sm max-w-sm">
-              {!canViewOrders
-                ? "تحتاج صلاحية \"الطلبات\" لعرض خريطة الطلبات النشطة — تواصل مع مدير الحساب لمنحك إياها."
-                : "تعذّر تحميل خريطة الطلبات. حاول مرة أخرى لاحقاً."}
-            </p>
-          </div>
-        ) : (
-          <>
-            <div className="flex flex-wrap gap-3 text-xs">
-              {(["pending", "paid", "shipped"] as const).map(s => (
-                <span key={s} className="flex items-center gap-1">
-                  <span className="inline-block w-2.5 h-2.5 rounded-full" style={{ background: STATUS_COLOR[s] }} />
-                  {STATUS_LABEL[s]}
-                </span>
-              ))}
-            </div>
-            {isLoading ? (
-              <div className="flex justify-center py-8">
-                <Loader2 className="w-6 h-6 animate-spin" />
-              </div>
-            ) : (
-              <div ref={containerRef} className="w-full h-[480px] rounded-lg border" />
-            )}
-          </>
-        )}
-      </CardContent>
-    </Card>
-  );
-}
-
-function DeliveryZonesPageContent({ canViewOrders }: { canViewOrders: boolean }) {
-  return (
-    <Tabs defaultValue="zones" className="w-full">
-      <TabsList>
-        <TabsTrigger value="zones">مناطق التوصيل</TabsTrigger>
-        <TabsTrigger value="map">خريطة الطلبات المجمّعة</TabsTrigger>
-      </TabsList>
-      <TabsContent value="zones" className="mt-4">
-        <DeliveryZonesManager />
-      </TabsContent>
-      <TabsContent value="map" className="mt-4">
-        <OrdersClusterMap canViewOrders={canViewOrders} />
-      </TabsContent>
-    </Tabs>
-  );
-}
-
 export default function DeliveryZones() {
   return (
     <AdminGuard activeKey="deliveryZones">
-      {(user) => (
-        <DeliveryZonesPageContent
-          canViewOrders={user.isSuperAdmin || user.permissions.includes("orders")}
-        />
+      {() => (
+        <div className="space-y-4">
+          {/* ✅ خريطة الطلبات المجمّعة أصبحت صفحة مستقلة مخصصة للموصلين — رابط
+              مباشر إليها بدل تبويب ثانٍ هنا (راجع DeliveryMap.tsx). */}
+          <div className="flex justify-end">
+            <Link href="/delivery-map">
+              <Button variant="outline" size="sm" className="gap-2">
+                <MapPin className="w-4 h-4" /> فتح خريطة التوصيل
+              </Button>
+            </Link>
+          </div>
+          <DeliveryZonesManager />
+        </div>
       )}
     </AdminGuard>
   );

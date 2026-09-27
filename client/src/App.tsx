@@ -16,6 +16,7 @@ import Notifications from "./pages/Notifications";
 import ContactMessages from "./pages/ContactMessages";
 import ErrorLogs from "./pages/ErrorLogs";
 import DeliveryZones from "./pages/DeliveryZones";
+import DeliveryMap from "./pages/DeliveryMap";
 
 // موقع لوحة التحكم مستقل تمامًا عن موقع العملاء: لا صفحات تسوّق هنا إطلاقاً.
 // كل قسم إداري له رابط حقيقي خاص به الآن (/products، /orders، /users...).
@@ -28,6 +29,7 @@ function Router() {
       <Route path={"/contact-messages"} component={ContactMessages} />
       <Route path={"/error-logs"} component={ErrorLogs} />
       <Route path={"/delivery-zones"} component={DeliveryZones} />
+      <Route path={"/delivery-map"} component={DeliveryMap} />
       <Route path={"/:section?"} component={AdminDashboard} />
       <Route component={NotFound} />
     </Switch>

@@ -139,6 +139,21 @@ export const ORDER_STATUS_COLORS = {
 
 export type OrderStatusKey = keyof typeof ORDER_STATUS_COLORS;
 
+// ── ألوان حالات الدفع — منفصلة عمداً عن حالة الطلب أعلاه ──────────
+// حالة الطلب (توصيل) وحالة الدفع مستقلتان تماماً (طلب "قيد الانتظار" قد
+// يكون مدفوعاً مسبقاً أو لا) — لذا لكل منهما شارة لونية خاصة بدل دمجهما
+// بنظام ألوان واحد قد يُلبس إحداهما بمعنى الأخرى.
+// unpaid=رمادي فاتح / pending_review=برتقالي (بانتظار مراجعة الأدمن) /
+// paid=أخضر / failed=أحمر.
+export const PAYMENT_STATUS_COLORS = {
+  unpaid:         { bg: "#E2E8F0", fg: "#334155" },
+  pending_review: { bg: "#FFEDD5", fg: "#9A3412" },
+  paid:           { bg: "#DCFCE7", fg: "#166534" },
+  failed:         { bg: "#FEE2E2", fg: "#991B1B" },
+} as const;
+
+export type PaymentStatusKey = keyof typeof PAYMENT_STATUS_COLORS;
+
 // ── تصدير مجمّع مريح للاستخدام في السياقات التي تحتاج Hex خام ────
 export const COLORS = {
   ink: INK,

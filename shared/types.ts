@@ -52,6 +52,13 @@ export type Product = {
 
 export type OrderStatus = "pending" | "paid" | "shipped" | "delivered" | "cancelled";
 
+// ✅ إصلاح: "pending_review" كانت تُكتب فعلياً بقاعدة البيانات (عند رفع
+// إيصال دفع) لكنها لم تكن ضمن النوع هنا ولا ضمن Zod enum بـupdateOrderStatus
+// بالسيرفر — أي تناقض صامت بين ما يُكتب فعلياً وما يعتبره TypeScript/Zod
+// صالحاً. الآن القيمة الرابعة معترف بها رسمياً في كل مكان (راجع
+// server/firestore-router.ts::updateOrderStatus وclient/src/lib/orderStatus.ts).
+export type PaymentStatus = "unpaid" | "pending_review" | "paid" | "failed";
+
 export type Order = {
   id: string;
   userId: string;
@@ -60,14 +67,18 @@ export type Order = {
     productId: string;
     name: string;
     quantity: number;
-    price: number;
+    price: number; // سعر الوحدة وقت الطلب — الإجمالي = price × quantity
+    image?: string; // صورة المنتج وقت الطلب (authoritativeItems بالسيرفر)
   }>;
   total: number;
   status: OrderStatus;
-  paymentStatus: "unpaid" | "paid" | "failed";
+  paymentStatus: PaymentStatus;
   paymentMethod?: string;
   paymentReceipt?: string;
   shippingAddress: any;
+  // ✅ علامة داخلية تمنع إرجاع المخزون مرتين لنفس الطلب (إلغاء ثم حذف،
+  // أو استدعاء مزدوج) — راجع updateOrderStatus وdeleteOrder بالسيرفر.
+  stockRestored?: boolean;
   createdAt: Date;
   updatedAt: Date;
 };

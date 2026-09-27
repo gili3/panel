@@ -34,18 +34,27 @@ import { db } from "../lib/admin";
  * تنفيذ الدالة نفسها.
  */
 
+// ✅ إعادة تنظيم: تحديث القيم لتطابق حالة الطلب الموحّدة الجديدة (status
+// واحد بستّ حالات بدل status+paymentStatus منفصلين) — راجع
+// shared/types.ts::OrderStatus وclient/src/lib/orderStatus.ts. لا تسمية
+// لـ"under_review" هنا عمداً: هي الحالة الابتدائية لكل طلب جديد، ويكفيها
+// إشعار "تم استلام طلبك" الذي يرسله onOrderCreated أدناه بلا حاجة لإشعار
+// "تغيّر حالة" إضافي عند إنشائه؛ لو عاد طلب لهذه الحالة لاحقاً (إعادة رفع
+// إيصال) فلا داعي لإزعاج العميل بإشعار عن ذلك تحديداً.
 const ORDER_STATUS_LABELS_AR: Record<string, string> = {
-  paid: "تم تأكيد الدفع",
-  shipped: "تم شحن طلبك",
+  processing: "جاري تجهيز طلبك",
+  out_for_delivery: "طلبك في الطريق إليك",
   delivered: "تم توصيل الطلب",
   cancelled: "تم إلغاء الطلب",
+  payment_failed: "فشلت عملية الدفع لطلبك",
 };
 
 const ORDER_STATUS_NOTIF_TYPE: Record<string, "shipping" | "order" | "general"> = {
-  shipped: "shipping",
+  processing: "order",
+  out_for_delivery: "shipping",
   delivered: "order",
-  paid: "order",
   cancelled: "general",
+  payment_failed: "general",
 };
 
 /**

@@ -50,14 +50,22 @@ export type Product = {
   updatedAt: Date;
 };
 
-export type OrderStatus = "pending" | "paid" | "shipped" | "delivered" | "cancelled";
-
-// ✅ إصلاح: "pending_review" كانت تُكتب فعلياً بقاعدة البيانات (عند رفع
-// إيصال دفع) لكنها لم تكن ضمن النوع هنا ولا ضمن Zod enum بـupdateOrderStatus
-// بالسيرفر — أي تناقض صامت بين ما يُكتب فعلياً وما يعتبره TypeScript/Zod
-// صالحاً. الآن القيمة الرابعة معترف بها رسمياً في كل مكان (راجع
-// server/firestore-router.ts::updateOrderStatus وclient/src/lib/orderStatus.ts).
-export type PaymentStatus = "unpaid" | "pending_review" | "paid" | "failed";
+// ✅ إعادة تنظيم جذرية: كانت حالة الطلب (OrderStatus) وحالة الدفع
+// (PaymentStatus سابقاً) حقلين منفصلين تماماً على نفس الطلب، معروضين
+// كقائمتين منفصلتين بلوحة التحكم — ما كان يسبب تناقضات (مثال: طلب
+// "ملغي" لكن حالة دفعه ما زالت "بانتظار المراجعة") وواجهة مربكة تحتاج
+// لتحديث حقلين منفصلين لكل تغيير. الآن حقل واحد فقط (status) بستّ حالات
+// مرتّبة تمثّل دورة حياة الطلب الكاملة (بما فيها فشل الدفع)، بلا أي حقل
+// paymentStatus منفصل. راجع server/firestore-router.ts::updateOrderStatus
+// وclient/src/lib/orderStatus.ts وapk Models.kt::OrderStatus (نفس القيم
+// حرفياً في الثلاثة).
+export type OrderStatus =
+  | "under_review"     // قيد المراجعة — الحالة الابتدائية لكل طلب جديد
+  | "processing"       // قيد التجهيز — تم تأكيد الدفع ويُجهَّز الطلب
+  | "out_for_delivery" // قيد التوصيل
+  | "delivered"        // تم التسليم
+  | "cancelled"        // ملغي
+  | "payment_failed";  // دفع فاشل
 
 export type Order = {
   id: string;
@@ -72,7 +80,6 @@ export type Order = {
   }>;
   total: number;
   status: OrderStatus;
-  paymentStatus: PaymentStatus;
   paymentMethod?: string;
   paymentReceipt?: string;
   shippingAddress: any;

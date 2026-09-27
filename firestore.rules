@@ -487,7 +487,10 @@ service cloud.firestore {
       // ✅ الإنشاء: يخص طلبات تطبيق الأندرويد (placeOrder يكتب مباشرة لـFirestore).
       // تحقق أساسي إجباري:
       //   • الطلب يخص صاحبه (userId == uid المُصادَق عليه)، ولا يمكن انتحال هوية غيره
-      //   • الحالة الابتدائية "pending" فقط (لا يمكن إنشاء طلب "مُسلَّم" مثلاً)
+      //   • الحالة الابتدائية "under_review" فقط (لا يمكن إنشاء طلب "مُسلَّم" مثلاً)
+      //     ✅ إعادة تنظيم: كانت القيمة "pending" (نظام status/paymentStatus
+      //     منفصلين قديم) — الآن "under_review" ضمن حقل status الموحّد الجديد
+      //     (راجع shared/types.ts::OrderStatus).
       //   • الحسابات المالية متّسقة داخلياً: total = subtotal - discount + shippingCost
       //   • القيم المالية غير سالبة
       //   • (Audit C-1) سعر كل عنصر ومجموعه الفرعي يُتحقق منهما فعلياً مقابل مستند
@@ -498,7 +501,7 @@ service cloud.firestore {
       //     ويُسجَّل استخدامه لهذا المستخدم ضمن نفس المعاملة، عبر discountValid().
       allow create: if isSignedIn() &&
         request.resource.data.userId == request.auth.uid &&
-        request.resource.data.status.lower() == 'pending' &&
+        request.resource.data.status.lower() == 'under_review' &&
         request.resource.data.items is list &&
         request.resource.data.items.size() > 0 &&
         request.resource.data.subtotal is number && request.resource.data.subtotal >= 0 &&

@@ -18,7 +18,7 @@ import {
 import { useState, useEffect, useRef } from "react";
 import { trpc } from "@/lib/trpc";
 import { toast } from "sonner";
-import { getOrderStatusConfig, getPaymentStatusConfig, ORDER_STATUS_OPTIONS, PAYMENT_STATUS_OPTIONS } from "@/lib/orderStatus";
+import { getOrderStatusConfig, ORDER_STATUS_OPTIONS } from "@/lib/orderStatus";
 import { formatNumber } from "@/lib/formatters";
 import { uploadMultipleImages, deleteImageFromStorage, compressImage, uploadImageToStorage } from "@/lib/imageUpload";
 import { PRESET_THEMES, getContrastRatio, getReadableTextColor, deriveDarkTriplet } from "@/lib/themePresets";
@@ -75,7 +75,6 @@ interface BrandFormData {
 interface OrderStatusDialogProps {
   orderId: string;
   currentStatus: string;
-  currentPaymentStatus: string;
   paymentReceipt?: string;
   // ✅ جديد: عنوان الشحن (بما فيه latitude/longitude إن وُجدت) — لعرضه
   // للأدمن مع رابط فتح مباشر على خرائط جوجل يسهّل التوصيل
@@ -85,14 +84,15 @@ interface OrderStatusDialogProps {
   } | null;
   // ✅ جديد: عناصر الطلب — لعرضها بالصورة/الاسم/الكمية/السعر داخل النافذة
   items?: Array<{ productId?: string; name: string; quantity: number; price: number; image?: string }>;
-  onSave: (status: string, paymentStatus: string) => void;
+  onSave: (status: string) => void;
   onClose: () => void;
 }
 
 // ✅ إصلاح: كانت هذه الدالة تعرّف ألوان حالة الطلب محلياً بتدرّج Tailwind
-// مختلف تماماً عن الموقع (bg-yellow-100/bg-blue-100/bg-indigo-100...) —
-// الآن موحّدة 100% مع Orders.tsx / OrderDetail.tsx / VerifyOrder.tsx عبر
-// نفس المصدر lib/orderStatus.ts، بنفس القيم الست عشرية الثابتة المطلوبة.
+// مختلف تماماً عن باقي الصفحات — الآن موحّدة 100% عبر نفس المصدر
+// lib/orderStatus.ts، بنفس القيم الست عشرية الثابتة المطلوبة.
+// ✅ إعادة تنظيم: حالة واحدة موحّدة (status) بدل status+paymentStatus
+// منفصلين — لم تعد هناك حاجة لشارة حالة دفع مستقلة (PaymentStatusBadge).
 function StatusBadge({ status }: { status: string }) {
   const { label, style } = getOrderStatusConfig(status);
   return (
@@ -103,13 +103,6 @@ function StatusBadge({ status }: { status: string }) {
       {label}
     </span>
   );
-}
-
-// شارة حالة الدفع — مصدر الألوان/التسميات موحّد عبر lib/orderStatus.ts (منفصلة
-// عمداً عن StatusBadge/حالة الطلب أعلاه، راجع التعليق بـlib/colors.ts).
-function PaymentStatusBadge({ status }: { status: string }) {
-  const { label, style } = getPaymentStatusConfig(status);
-  return <span style={style} className="px-2 py-1 rounded text-xs font-semibold">{label}</span>;
 }
 
 // ✅ إعادة تنظيم: عناصر الطلب (صورة/اسم/كمية/سعر الوحدة/الإجمالي) لم تكن
@@ -140,12 +133,11 @@ function OrderItemsList({ items }: { items: Array<{ productId?: string; name: st
   );
 }
 
-// ✅ إعادة تنظيم كاملة لنافذة "تفاصيل/تحديث الطلب": تجمع الآن حالة الطلب +
-// حالة الدفع + عناصر الطلب (مع الصورة) + تعديل العنوان/الهاتف (يُزامَن مع
+// ✅ إعادة تنظيم كاملة لنافذة "تفاصيل/تحديث الطلب": تجمع الآن حالة الطلب
+// الموحّدة + عناصر الطلب (مع الصورة) + تعديل العنوان/الهاتف (يُزامَن مع
 // Firebase عبر updateOrderAddress بالسيرفر) في مكان واحد بدل بيانات ناقصة.
-function OrderStatusDialog({ orderId, currentStatus, currentPaymentStatus, paymentReceipt, shippingAddress, items, onSave, onClose }: OrderStatusDialogProps) {
+function OrderStatusDialog({ orderId, currentStatus, paymentReceipt, shippingAddress, items, onSave, onClose }: OrderStatusDialogProps) {
   const [status, setStatus] = useState(currentStatus);
-  const [paymentStatus, setPaymentStatus] = useState(currentPaymentStatus);
   const [editingAddress, setEditingAddress] = useState(false);
   const [addrForm, setAddrForm] = useState({
     fullName: shippingAddress?.fullName || shippingAddress?.name || "",
@@ -158,8 +150,7 @@ function OrderStatusDialog({ orderId, currentStatus, currentPaymentStatus, payme
 
   useEffect(() => {
     setStatus(currentStatus);
-    setPaymentStatus(currentPaymentStatus);
-  }, [currentStatus, currentPaymentStatus]);
+  }, [currentStatus]);
 
   const utils = trpc.useUtils();
   const updateOrderAddress = trpc.firestore.updateOrderAddress.useMutation({
@@ -241,29 +232,16 @@ function OrderStatusDialog({ orderId, currentStatus, currentPaymentStatus, payme
         {/* ✅ عناصر الطلب: صورة + اسم + كمية + سعر الوحدة + الإجمالي، من order.items */}
         <OrderItemsList items={items || []} />
 
-        <div className="grid grid-cols-2 gap-3">
-          <div>
-            <label htmlFor="order-status" className="text-sm font-semibold">حالة الطلب</label>
-            <Select value={status} onValueChange={setStatus}>
-              <SelectTrigger id="order-status"><SelectValue /></SelectTrigger>
-              <SelectContent>
-                {ORDER_STATUS_OPTIONS.map((o) => (
-                  <SelectItem key={o.value} value={o.value}>{o.label}</SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </div>
-          <div>
-            <label htmlFor="order-payment-status" className="text-sm font-semibold">حالة الدفع</label>
-            <Select value={paymentStatus} onValueChange={setPaymentStatus}>
-              <SelectTrigger id="order-payment-status"><SelectValue /></SelectTrigger>
-              <SelectContent>
-                {PAYMENT_STATUS_OPTIONS.map((o) => (
-                  <SelectItem key={o.value} value={o.value}>{o.label}</SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </div>
+        <div>
+          <label htmlFor="order-status" className="text-sm font-semibold">حالة الطلب</label>
+          <Select value={status} onValueChange={setStatus}>
+            <SelectTrigger id="order-status"><SelectValue /></SelectTrigger>
+            <SelectContent>
+              {ORDER_STATUS_OPTIONS.map((o) => (
+                <SelectItem key={o.value} value={o.value}>{o.label}</SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
         </div>
 
         {paymentReceipt && (
@@ -290,7 +268,7 @@ function OrderStatusDialog({ orderId, currentStatus, currentPaymentStatus, payme
         )}
 
         <div className="flex gap-2">
-          <Button className="flex-1" onClick={() => onSave(status, paymentStatus)}>حفظ</Button>
+          <Button className="flex-1" onClick={() => onSave(status)}>حفظ</Button>
           <Button variant="outline" className="flex-1" onClick={onClose}>إلغاء</Button>
         </div>
       </div>
@@ -448,7 +426,7 @@ export default function AdminDashboard() {
   const [showCouponDialog, setShowCouponDialog] = useState(false);
   const [isEditingCoupon, setIsEditingCoupon] = useState(false);
 
-  const [activeOrderDialog, setActiveOrderDialog] = useState<{ id: string; status: string; paymentStatus: string; receipt?: string; shippingAddress?: any; items?: any[] } | null>(null);
+  const [activeOrderDialog, setActiveOrderDialog] = useState<{ id: string; status: string; receipt?: string; shippingAddress?: any; items?: any[] } | null>(null);
   const [orderStatusFilter, setOrderStatusFilter] = useState<string>("all");
 
   const [settingsForm, setSettingsForm] = useState({
@@ -964,8 +942,8 @@ export default function AdminDashboard() {
     }
   };
 
-  const handleSaveOrderStatus = (orderId: string, newStatus: string, newPaymentStatus: string) => {
-    updateOrderStatus.mutate({ id: orderId, status: newStatus as any, paymentStatus: newPaymentStatus as any });
+  const handleSaveOrderStatus = (orderId: string, newStatus: string) => {
+    updateOrderStatus.mutate({ id: orderId, status: newStatus as any });
   };
 
   // Image Upload Handlers
@@ -1501,11 +1479,7 @@ export default function AdminDashboard() {
                   <div className="flex flex-wrap gap-2">
                     {[
                       { value: "all", label: "الكل" },
-                      { value: "pending", label: "قيد الانتظار" },
-                      { value: "paid", label: "تم الدفع" },
-                      { value: "shipped", label: "خرج للتوصيل" },
-                      { value: "delivered", label: "تم التسليم" },
-                      { value: "cancelled", label: "ملغي" },
+                      ...ORDER_STATUS_OPTIONS,
                     ].map((f) => (
                       <Button
                         key={f.value}
@@ -1553,13 +1527,10 @@ export default function AdminDashboard() {
                             <TableCell className="whitespace-nowrap" dir="ltr">
                               {order.shippingAddress?.phone || "-"}
                             </TableCell>
-                            {/* ✅ دمج حالة الطلب وحالة الدفع بعمود واحد بدل انتشارهما — كانت حالة
-                                الدفع غير ظاهرة إطلاقاً بجدول الطلبات (فقط عند فتح تفاصيل الطلب). */}
+                            {/* ✅ إعادة تنظيم: شارة واحدة لحالة الطلب الموحّدة بدل شارتين
+                                منفصلتين (حالة طلب + حالة دفع) كانتا قد تتناقضان أحياناً. */}
                             <TableCell>
-                              <div className="flex flex-col gap-1 items-start">
-                                <StatusBadge status={order.status} />
-                                <PaymentStatusBadge status={order.paymentStatus || "unpaid"} />
-                              </div>
+                              <StatusBadge status={order.status} />
                             </TableCell>
                             <TableCell className="max-w-[180px]">
                               <div className="truncate text-sm text-muted-foreground">
@@ -1597,8 +1568,7 @@ export default function AdminDashboard() {
                                       size="sm"
                                       onClick={() => setActiveOrderDialog({
                                         id: order.id,
-                                        status: order.status || "pending",
-                                        paymentStatus: order.paymentStatus || "unpaid",
+                                        status: order.status || "under_review",
                                         receipt: order.paymentReceipt,
                                         shippingAddress: order.shippingAddress || null,
                                         items: order.items || [],
@@ -1611,11 +1581,10 @@ export default function AdminDashboard() {
                                     <OrderStatusDialog
                                       orderId={order.id}
                                       currentStatus={activeOrderDialog.status}
-                                      currentPaymentStatus={activeOrderDialog.paymentStatus}
                                       paymentReceipt={activeOrderDialog.receipt}
                                       shippingAddress={activeOrderDialog.shippingAddress}
                                       items={activeOrderDialog.items}
-                                      onSave={(status, paymentStatus) => handleSaveOrderStatus(order.id, status, paymentStatus)}
+                                      onSave={(status) => handleSaveOrderStatus(order.id, status)}
                                       onClose={() => setActiveOrderDialog(null)}
                                     />
                                   )}

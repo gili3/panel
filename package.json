@@ -15,7 +15,8 @@
     "test": "vitest run",
     "install:force": "pnpm install --no-frozen-lockfile",
     "update:lock": "pnpm update --no-frozen-lockfile",
-    "algolia:backfill": "tsx scripts/backfill-algolia.ts"
+    "algolia:backfill": "tsx scripts/backfill-algolia.ts",
+    "orders:migrate-status": "tsx scripts/migrate-order-status.ts"
   },
   "dependencies": {
     "algoliasearch": "^5.20.0",

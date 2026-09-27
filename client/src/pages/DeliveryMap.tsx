@@ -18,28 +18,58 @@ import { Select, SelectTrigger, SelectValue, SelectContent, SelectItem } from "@
 import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetDescription } from "@/components/ui/sheet";
 import { Loader2, MapPin, ShieldAlert, Search } from "lucide-react";
 import { formatNumber } from "@/lib/formatters";
-import { getOrderStatusConfig, ORDER_STATUS_OPTIONS, getPaymentStatusConfig, PAYMENT_STATUS_OPTIONS } from "@/lib/orderStatus";
+import { getOrderStatusConfig, ORDER_STATUS_OPTIONS } from "@/lib/orderStatus";
+import { ORDER_STATUS_COLORS } from "@/lib/colors";
 import { KHARTOUM_CENTER, TILE_URL, TILE_ATTRIBUTION } from "@/lib/mapConstants";
 
 // window.L محمَّل عبر <script> عادي بـindex.html (Leaflet + Leaflet.markercluster) —
 // لا يوجد نوع TS رسمي مثبَّت هنا (@types/leaflet)، لذا `any` مقصودة.
 declare const L: any;
 
-const STATUS_COLOR: Record<string, string> = {
-  pending: "#f59e0b",
-  paid: "#3b82f6",
-  shipped: "#8b5cf6",
-};
-const STATUS_LABEL: Record<string, string> = {
-  pending: "قيد الانتظار",
-  paid: "تم الدفع",
-  shipped: "خرج للتوصيل",
-};
-const ALL_STATUSES = ["pending", "paid", "shipped"] as const;
+// ✅ إعادة تنظيم: الحالات "النشطة" (قبل التسليم/الإلغاء/فشل الدفع) التي
+// يتابعها الموصّل فعلياً على الخريطة — ألوانها/تسمياتها من نفس مصدر
+// الحقيقة الموحّد (lib/orderStatus.ts) بدل تعريف محلي مكرَّر هنا.
+const ALL_STATUSES = ["under_review", "processing", "out_for_delivery"] as const;
+const STATUS_COLOR: Record<string, string> = Object.fromEntries(
+  ALL_STATUSES.map((s) => [s, ORDER_STATUS_COLORS[s].bg])
+);
+const STATUS_LABEL: Record<string, string> = Object.fromEntries(
+  ALL_STATUSES.map((s) => [s, getOrderStatusConfig(s).label])
+);
 type ActiveOrderLocation = {
   orderId: string; orderNumber: string; status: string; total: number;
   customerName: string; phone: string; city: string; lat: number; lng: number;
+  createdAt: string | null;
 };
+
+// ✅ جديد: طلب "متأخر" — لا يزال بحالة نشطة بعد مرور أكثر من الحد الزمني
+// المعقول لكل مرحلة. يساعد الموصّل/الأدمن على اكتشاف الطلبات المهملة أو
+// المنسية بنظرة واحدة على الخريطة بدل فتح كل طلب على حدة للتأكد.
+const STALE_THRESHOLD_MINUTES: Record<string, number> = {
+  under_review: 30,      // بانتظار مراجعة الأدمن لأكثر من نصف ساعة
+  processing: 60,        // قيد التجهيز لأكثر من ساعة
+  out_for_delivery: 90,  // قيد التوصيل لأكثر من ساعة ونصف
+};
+
+function getElapsedMinutes(iso: string | null): number | null {
+  if (!iso) return null;
+  const t = new Date(iso).getTime();
+  if (!Number.isFinite(t)) return null;
+  return Math.max(0, Math.round((Date.now() - t) / 60_000));
+}
+
+function formatElapsed(minutes: number): string {
+  if (minutes < 60) return `منذ ${minutes} د`;
+  const hours = Math.floor(minutes / 60);
+  const rest = minutes % 60;
+  return rest > 0 ? `منذ ${hours} س ${rest} د` : `منذ ${hours} س`;
+}
+
+function isStale(status: string, minutes: number | null): boolean {
+  if (minutes === null) return false;
+  const threshold = STALE_THRESHOLD_MINUTES[status];
+  return threshold !== undefined && minutes >= threshold;
+}
 
 // ✅ إحداثية صالحة فعلياً: رقمان محدودان، ضمن مدى خطوط الطول/العرض،
 // وليسا (0,0) — نقطة شائعة لموقع غير محدَّد بدل قيمة مفقودة. السيرفر
@@ -59,11 +89,6 @@ function StatusBadge({ status }: { status: string }) {
   return <span style={style} className="px-2 py-1 rounded text-xs font-semibold">{label}</span>;
 }
 
-function PaymentStatusBadge({ status }: { status: string }) {
-  const { label, style } = getPaymentStatusConfig(status);
-  return <span style={style} className="px-2 py-1 rounded text-xs font-semibold">{label}</span>;
-}
-
 // لوحة تفاصيل الطلب المفتوحة من الخريطة مباشرة (ضغط دبوس أو نتيجة بحث) —
 // تجلب التفاصيل الكاملة (العناصر + العنوان) وتسمح بتحديث الحالة فوراً بلا
 // تنقّل لصفحة "الطلبات" المنفصلة.
@@ -73,13 +98,11 @@ function OrderDetailsSheet({ orderId, onClose }: { orderId: string | null; onClo
     { id: orderId ?? "" },
     { enabled: !!orderId }
   );
-  const [status, setStatus] = useState("pending");
-  const [paymentStatus, setPaymentStatus] = useState("unpaid");
+  const [status, setStatus] = useState("under_review");
 
   useEffect(() => {
     if (order) {
       setStatus(order.status);
-      setPaymentStatus(order.paymentStatus);
     }
   }, [order]);
 
@@ -114,12 +137,20 @@ function OrderDetailsSheet({ orderId, onClose }: { orderId: string | null; onClo
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-2">
                 <StatusBadge status={order.status} />
-                <PaymentStatusBadge status={order.paymentStatus} />
               </div>
               <span className="text-sm text-muted-foreground">
                 {order.createdAt
                   ? new Date(order.createdAt).toLocaleDateString('ar-EG-u-nu-latn', { year: 'numeric', month: 'short', day: 'numeric', calendar: 'gregory' })
                   : "-"}
+                {(() => {
+                  const mins = getElapsedMinutes(order.createdAt ?? null);
+                  if (mins === null) return null;
+                  return (
+                    <span className={isStale(order.status, mins) ? "text-destructive font-semibold" : ""}>
+                      {" · "}{formatElapsed(mins)}
+                    </span>
+                  );
+                })()}
               </span>
             </div>
 
@@ -159,35 +190,22 @@ function OrderDetailsSheet({ orderId, onClose }: { orderId: string | null; onClo
               </div>
             </div>
 
-            <div className="grid grid-cols-2 gap-3">
-              <div>
-                <label className="text-sm font-semibold">حالة الطلب</label>
-                <Select value={status} onValueChange={setStatus}>
-                  <SelectTrigger><SelectValue /></SelectTrigger>
-                  <SelectContent>
-                    {ORDER_STATUS_OPTIONS.map(o => (
-                      <SelectItem key={o.value} value={o.value}>{o.label}</SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
-              <div>
-                <label className="text-sm font-semibold">حالة الدفع</label>
-                <Select value={paymentStatus} onValueChange={setPaymentStatus}>
-                  <SelectTrigger><SelectValue /></SelectTrigger>
-                  <SelectContent>
-                    {PAYMENT_STATUS_OPTIONS.map(o => (
-                      <SelectItem key={o.value} value={o.value}>{o.label}</SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
+            <div>
+              <label className="text-sm font-semibold">حالة الطلب</label>
+              <Select value={status} onValueChange={setStatus}>
+                <SelectTrigger><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  {ORDER_STATUS_OPTIONS.map(o => (
+                    <SelectItem key={o.value} value={o.value}>{o.label}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
             </div>
 
             <Button
               className="w-full"
               disabled={updateStatus.isPending}
-              onClick={() => updateStatus.mutate({ id: order.id, status: status as any, paymentStatus: paymentStatus as any })}
+              onClick={() => updateStatus.mutate({ id: order.id, status: status as any })}
             >
               {updateStatus.isPending ? <Loader2 className="w-4 h-4 animate-spin" /> : "حفظ التحديث"}
             </Button>
@@ -201,10 +219,11 @@ function OrderDetailsSheet({ orderId, onClose }: { orderId: string | null; onClo
 function OrdersClusterMap({ canViewOrders }: { canViewOrders: boolean }) {
   // ✅ تحديث دوري كل 30 ثانية — خريطة مفتوحة طوال وقت التوصيل تعكس طلبات
   // جديدة/متغيّرة الحالة بلا حاجة لتحديث الصفحة يدوياً.
-  const { data: locations, isLoading, error } = trpc.deliveryZones.getActiveOrderLocations.useQuery(undefined, {
-    refetchInterval: 30_000,
-    enabled: canViewOrders,
-  });
+  const { data: locations, isLoading, isFetching, error, dataUpdatedAt, refetch } =
+    trpc.deliveryZones.getActiveOrderLocations.useQuery(undefined, {
+      refetchInterval: 30_000,
+      enabled: canViewOrders,
+    });
   const { data: zones } = trpc.deliveryZones.getZones.useQuery(undefined, { enabled: canViewOrders });
 
   const containerRef = useRef<HTMLDivElement | null>(null);
@@ -212,6 +231,13 @@ function OrdersClusterMap({ canViewOrders }: { canViewOrders: boolean }) {
   const clusterRef = useRef<any>(null);
   const zonesLayerRef = useRef<any>(null);
   const markersByIdRef = useRef<Map<string, any>>(new Map());
+  // ✅ إصلاح: تُستخدم لتفادي إعادة توسيط/تكبير الخريطة تلقائياً عند كل
+  // تحديث دوري للبيانات (كل 30 ثانية) — كان هذا يقطع على الموصّل تكبيره
+  // أو تحريكه اليدوي للخريطة أثناء تنقّله الفعلي بالشارع. الآن التوسيط
+  // التلقائي يحدث فقط أول مرة تُحمَّل فيها البيانات أو عند تغيير الفلتر
+  // صراحة، وإلا فبإمكان الموصّل الضغط على زر "توسيط الخريطة" يدوياً.
+  const hasFittedRef = useRef(false);
+  const lastFilterKeyRef = useRef<string>("");
 
   const [statusFilter, setStatusFilter] = useState<Set<string>>(new Set(ALL_STATUSES));
   const [search, setSearch] = useState("");
@@ -270,7 +296,7 @@ function OrdersClusterMap({ canViewOrders }: { canViewOrders: boolean }) {
     [validLocations, statusFilter]
   );
 
-  // ── إعادة بناء الدبابيس عند تغيّر الفلتر/البيانات + تكبير تلقائي (fitBounds) ──
+  // ── إعادة بناء الدبابيس عند تغيّر الفلتر/البيانات ──────────────────
   useEffect(() => {
     const map = mapRef.current;
     const cluster = clusterRef.current;
@@ -282,13 +308,29 @@ function OrdersClusterMap({ canViewOrders }: { canViewOrders: boolean }) {
 
     filteredLocations.forEach(o => {
       const color = STATUS_COLOR[o.status] ?? "#dc2626";
+      const mins = getElapsedMinutes(o.createdAt);
+      const stale = isStale(o.status, mins);
+      // ✅ الطلبات "المتأخرة" (تجاوزت المدة المعقولة لحالتها) تُميَّز بحلقة
+      // حمراء نابضة حول الدبوس — تُلاحَظ من نظرة سريعة بلا حاجة لفتح كل
+      // طلب على حدة للتحقق من مدة بقائه بنفس الحالة.
       const icon = L.divIcon({
         className: "",
-        html: `<div style="width:16px;height:16px;border-radius:50%;background:${color};border:2px solid #fff;box-shadow:0 0 0 1px rgba(0,0,0,.3)"></div>`,
+        html: `<div style="position:relative;width:16px;height:16px;">
+          ${stale ? `<div style="position:absolute;inset:-6px;border-radius:50%;border:2px solid #dc2626;animation:pulse-stale 1.5s ease-out infinite;"></div>` : ""}
+          <div style="width:16px;height:16px;border-radius:50%;background:${color};border:2px solid #fff;box-shadow:0 0 0 1px rgba(0,0,0,.3)"></div>
+        </div>`,
         iconSize: [16, 16],
         iconAnchor: [8, 8],
       });
       const marker = L.marker([o.lat, o.lng], { icon });
+      // ✅ Tooltip عند التحويم/اللمس تُظهر رقم الطلب والعميل والمدة المنقضية
+      // بلا حاجة لفتح تفاصيل الطلب الكاملة لمجرد التعرّف عليه على الخريطة.
+      const tooltipParts = [
+        `#${o.orderNumber}`,
+        o.customerName || null,
+        mins !== null ? formatElapsed(mins) + (stale ? " ⚠️ متأخر" : "") : null,
+      ].filter((part): part is string => Boolean(part));
+      marker.bindTooltip(tooltipParts.join(" — "), { direction: "top", offset: [0, -8] });
       // ✅ الضغط على الدبوس يفتح تفاصيل الطلب مباشرة (لوحة جانبية) بدل
       // نافذة Popup ثابتة — يشمل عناصر الطلب وإمكانية تحديث الحالة فوراً.
       marker.on("click", () => setSelectedOrderId(o.orderId));
@@ -300,12 +342,28 @@ function OrdersClusterMap({ canViewOrders }: { canViewOrders: boolean }) {
     else leafletMarkers.forEach(m => cluster.addLayer(m));
     markersByIdRef.current = nextMarkers;
 
-    // ✅ تكبير تلقائي ليشمل كل الطلبات الظاهرة بعد الفلترة الحالية
-    if (filteredLocations.length > 0) {
+    // ✅ إصلاح: التوسيط التلقائي (fitBounds) يحدث فقط أول مرة تصل فيها
+    // بيانات فعلية، أو عند تغيّر فلتر الحالة صراحة — وليس عند كل تحديث
+    // دوري (كل 30 ثانية) الذي قد يحرّك الخريطة من تحت يد الموصّل بلا داعٍ
+    // بينما يتنقّل فعلياً بالشارع. التحديث الدوري الآن يُحدّث الدبابيس فقط.
+    const filterKey = Array.from(statusFilter).sort().join(",");
+    const filterChanged = filterKey !== lastFilterKeyRef.current;
+    lastFilterKeyRef.current = filterKey;
+    if (filteredLocations.length > 0 && (!hasFittedRef.current || filterChanged)) {
       const bounds = L.latLngBounds(filteredLocations.map(o => [o.lat, o.lng] as [number, number]));
       map.fitBounds(bounds, { padding: [40, 40], maxZoom: 15 });
+      hasFittedRef.current = true;
     }
-  }, [filteredLocations]);
+  }, [filteredLocations, statusFilter]);
+
+  // ✅ زر "توسيط الخريطة" اليدوي — يعيد للموصّل القدرة على التوسيط بنفسه
+  // بعد أن أصبح التوسيط التلقائي محدوداً بالحالات أعلاه فقط.
+  function handleRecenter() {
+    const map = mapRef.current;
+    if (!map || filteredLocations.length === 0) return;
+    const bounds = L.latLngBounds(filteredLocations.map(o => [o.lat, o.lng] as [number, number]));
+    map.fitBounds(bounds, { padding: [40, 40], maxZoom: 15 });
+  }
 
   // ── إظهار نتيجة البحث بعد إعادة بناء الدبابيس (تُنفَّذ بعد تفعيل حالتها بالفلتر إن لزم) ──
   useEffect(() => {
@@ -354,8 +412,19 @@ function OrdersClusterMap({ canViewOrders }: { canViewOrders: boolean }) {
   return (
     <Card>
       <CardHeader>
-        <CardTitle className="flex items-center gap-2">
-          <MapPin className="w-4 h-4" /> خريطة الطلبات النشطة ({filteredLocations.length}{filteredLocations.length !== totalActive ? ` من ${totalActive}` : ""})
+        <CardTitle className="flex flex-wrap items-center gap-2 justify-between">
+          <span className="flex items-center gap-2">
+            <MapPin className="w-4 h-4" /> خريطة الطلبات النشطة ({filteredLocations.length}{filteredLocations.length !== totalActive ? ` من ${totalActive}` : ""})
+          </span>
+          {/* ✅ جديد: آخر تحديث + زر تحديث يدوي — بما أن التحديث الدوري (30 ثانية)
+              لم يعد يعيد توسيط الخريطة تلقائياً، يحتاج الموصّل مؤشراً واضحاً
+              على حداثة البيانات المعروضة وقدرة على تحديثها فوراً عند الحاجة. */}
+          <span className="flex items-center gap-2 text-xs font-normal text-muted-foreground">
+            {dataUpdatedAt ? `آخر تحديث: ${new Date(dataUpdatedAt).toLocaleTimeString('ar-EG-u-nu-latn', { hour: '2-digit', minute: '2-digit' })}` : null}
+            <Button size="sm" variant="ghost" className="h-7 px-2" onClick={() => refetch()} disabled={isFetching}>
+              {isFetching ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : "تحديث الآن"}
+            </Button>
+          </span>
         </CardTitle>
       </CardHeader>
       <CardContent className="space-y-3">
@@ -404,8 +473,17 @@ function OrdersClusterMap({ canViewOrders }: { canViewOrders: boolean }) {
                   />
                 </div>
                 <Button size="sm" variant="secondary" onClick={handleSearch}>بحث</Button>
+                {/* ✅ جديد: توسيط يدوي — يعوّض عدم إعادة التوسيط التلقائي عند كل تحديث دوري */}
+                <Button size="sm" variant="outline" onClick={handleRecenter} title="توسيط الخريطة على كل الطلبات الظاهرة">
+                  توسيط
+                </Button>
               </div>
             </div>
+            {/* ✅ جديد: توضيح بصري لمعنى الحلقة الحمراء النابضة حول أي دبوس */}
+            <p className="text-xs text-muted-foreground flex items-center gap-1.5">
+              <span className="inline-block w-2.5 h-2.5 rounded-full border-2 border-destructive" />
+              الحلقة الحمراء = طلب متأخر عن المدة المعتادة لحالته الحالية
+            </p>
             {searchNotFound && (
               <p className="text-xs text-destructive">لم يُعثر على طلب نشط بهذا الرقم.</p>
             )}

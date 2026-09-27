@@ -18,8 +18,10 @@ const zoneInputSchema = z.object({
 });
 
 // الحالات التي تُعتبر "نشطة" لعرضها على خريطة الطلبات المجمّعة — بعد التسليم
-// أو الإلغاء لم يعد الطلب بحاجة لمتابعة موقعه على الخريطة.
-const ACTIVE_ORDER_STATUSES = ["pending", "paid", "shipped"] as const;
+// أو الإلغاء أو فشل الدفع لم يعد الطلب بحاجة لمتابعة موقعه على الخريطة.
+// ✅ إعادة تنظيم: تحديث القيم لتطابق حالة الطلب الموحّدة الجديدة (status
+// واحد بدل status+paymentStatus) — راجع shared/types.ts::OrderStatus.
+const ACTIVE_ORDER_STATUSES = ["under_review", "processing", "out_for_delivery"] as const;
 
 export const deliveryZoneRouter = router({
   // --- مناطق التوصيل: CRUD كامل، محمي بصلاحية "deliveryZones" ---
@@ -79,7 +81,6 @@ export const deliveryZoneRouter = router({
           orderId: doc.id,
           orderNumber: data.orderNumber as string,
           status: data.status as string,
-          paymentStatus: (data.paymentStatus as string) ?? "unpaid",
           total: data.total as number,
           customerName: addr?.fullName || addr?.name || "",
           phone: addr?.phone || "",
@@ -107,7 +108,6 @@ export const deliveryZoneRouter = router({
         id: doc.id,
         orderNumber: data.orderNumber as string,
         status: data.status as string,
-        paymentStatus: (data.paymentStatus as string) ?? "unpaid",
         paymentReceipt: data.paymentReceipt as string | undefined,
         total: data.total as number,
         items: Array.isArray(data.items) ? data.items : [],

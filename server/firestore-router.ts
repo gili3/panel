@@ -898,11 +898,10 @@ export const firestoreRouter = router({
         userId: ctx.user.openId,
         orderNumber: orderNumberString,
         verificationToken,
-        status: "pending",
-        // ✅ إصلاح: كان يُضبط "paid" تلقائياً بمجرد وجود ملف مرفوع، دون أي
-        // تحقق فعلي من محتواه — أصبح الآن "بانتظار المراجعة" ريثما يراجع
-        // الأدمن صورة الإيصال فعلياً من لوحة التحكم ويؤكدها يدوياً.
-        paymentStatus: input.paymentReceipt ? "pending_review" : "unpaid",
+        // ✅ إعادة تنظيم: حالة واحدة موحّدة بدل status/paymentStatus منفصلين —
+        // كل طلب جديد يبدأ دائماً بـ"قيد المراجعة" (سواء أُرفق إيصال دفع أو لا)
+        // ريثما يراجعه الأدمن فعلياً من لوحة التحكم وينقله للحالة التالية.
+        status: "under_review",
         createdAt: new Date(),
         updatedAt: new Date(),
       };
@@ -966,11 +965,9 @@ export const firestoreRouter = router({
         shippingAddress: input.shippingAddress,
         paymentMethod: input.paymentMethod,
         paymentReceipt: input.paymentReceipt,
-        status: "pending",
-        // ✅ إصلاح: كان يُضبط "paid" تلقائياً بمجرد وجود ملف مرفوع، دون أي
-        // تحقق فعلي من محتواه — أصبح الآن "بانتظار المراجعة" ريثما يراجع
-        // الأدمن صورة الإيصال فعلياً من لوحة التحكم ويؤكدها يدوياً.
-        paymentStatus: input.paymentReceipt ? "pending_review" : "unpaid",
+        // ✅ إعادة تنظيم: نفس منطق createOrder أعلاه — حالة واحدة موحّدة،
+        // كل طلب جديد يبدأ بـ"قيد المراجعة" بصرف النظر عن وجود إيصال دفع.
+        status: "under_review",
         createdAt: new Date(),
         updatedAt: new Date(),
       };
@@ -1234,7 +1231,7 @@ export const firestoreRouter = router({
   // --- إدارة الطلبات ---
   getAllOrdersAdmin: adminPermission("orders")
     .input(z.object({
-      status: z.enum(['all', 'pending', 'paid', 'shipped', 'delivered', 'cancelled']).optional(),
+      status: z.enum(['all', 'under_review', 'processing', 'out_for_delivery', 'delivered', 'cancelled', 'payment_failed']).optional(),
       // ✅ Pagination حقيقية (startAfter) بدل جلب دفعة واحدة ثابتة: مرّر
       // createdAt (بصيغة ISO) لآخر طلب ظهر بالصفحة السابقة لجلب ما بعده.
       cursor: z.string().nullish(),
@@ -1287,13 +1284,10 @@ export const firestoreRouter = router({
   updateOrderStatus: adminPermission("orders")
     .input(z.object({
       id: z.string(),
-      status: z.enum(['pending', 'paid', 'shipped', 'delivered', 'cancelled']),
-      // ✅ إصلاح: كانت "pending_review" مفقودة من هذا الـenum رغم أنها تُكتب
-      // فعلياً بقاعدة البيانات (createOrder/createDirectOrder عند رفع إيصال،
-      // وupdateOrderReceipt أدناه) وموجودة بالفعل ضمن خيارات الواجهة
-      // (OrderStatusDialog) — أي محاولة حفظها من لوحة التحكم كانت تفشل بخطأ
-      // تحقق صامت من tRPC (BAD_REQUEST) بلا أي تفسير واضح للأدمن.
-      paymentStatus: z.enum(['unpaid', 'pending_review', 'paid', 'failed']).optional(),
+      // ✅ إعادة تنظيم: حقل status واحد موحّد بستّ حالات بدل status+paymentStatus
+      // منفصلين — راجع shared/types.ts::OrderStatus وclient/src/lib/orderStatus.ts
+      // للترتيب الرسمي المعتمد لهذه الحالات.
+      status: z.enum(['under_review', 'processing', 'out_for_delivery', 'delivered', 'cancelled', 'payment_failed']),
     }))
     .mutation(async ({ input, ctx }) => {
       const { id, ...data } = input;
@@ -1302,30 +1296,34 @@ export const firestoreRouter = router({
       // ✅ إصلاح حرج: لم يكن هناك أي منطق لإرجاع المخزون عند إلغاء طلب —
       // المخزون المخصوم وقت الإنشاء (createOrder/createDirectOrder) كان يضيع
       // نهائياً عند أي إلغاء لاحق من الأدمن، فيظهر المنتج بمخزون أقل من
-      // الحقيقي بشكل تراكمي مع الوقت. الآن، عند الانتقال *إلى* 'cancelled'
-      // من حالة لم تكن 'cancelled' من قبل، نُرجع كمية كل عنصر لمخزون منتجه
-      // ضمن transaction ذرّية، ونضع علامة orderData.stockRestored لمنع أي
-      // إرجاع مضاعف لاحقاً (مثال: استدعاء الدالة أكثر من مرة بنفس الحالة).
+      // الحقيقي بشكل تراكمي مع الوقت. الآن، عند الانتقال *إلى* حالة نهائية
+      // بلا مخزون فعلي ('cancelled' أو 'payment_failed' — فشل الدفع يعني
+      // الطلب لن يُنفَّذ فعلياً، تماماً كالإلغاء) من حالة لم تكن كذلك من قبل،
+      // نُرجع كمية كل عنصر لمخزون منتجه ضمن transaction ذرّية، ونضع علامة
+      // orderData.stockRestored لمنع أي إرجاع مضاعف لاحقاً (مثال: استدعاء
+      // الدالة أكثر من مرة بنفس الحالة، أو إلغاء طلب سبق أن فشل دفعه).
+      const STOCK_RESTORING_STATUSES = new Set(['cancelled', 'payment_failed']);
       const { orderData, orderNumber, userId } = await adminDb.runTransaction(async (tx) => {
         const orderDoc = await tx.get(orderRef);
         if (!orderDoc.exists) {
           throw new TRPCError({ code: "NOT_FOUND", message: "الطلب غير موجود" });
         }
         const orderData = orderDoc.data()!;
-        const wasCancelled = orderData.status === 'cancelled';
-        const willBeCancelled = input.status === 'cancelled';
+        const wasRestoringStatus = STOCK_RESTORING_STATUSES.has(orderData.status);
+        const willBeRestoringStatus = STOCK_RESTORING_STATUSES.has(input.status);
         const alreadyRestored = orderData.stockRestored === true;
+        const shouldRestore = willBeRestoringStatus && !wasRestoringStatus && !alreadyRestored;
 
         let productRefs: FirebaseFirestore.DocumentReference[] = [];
         let productDocs: FirebaseFirestore.DocumentSnapshot[] = [];
-        if (willBeCancelled && !wasCancelled && !alreadyRestored && Array.isArray(orderData.items)) {
+        if (shouldRestore && Array.isArray(orderData.items)) {
           productRefs = orderData.items.map((item: any) => adminDb.collection("products").doc(item.productId));
           productDocs = await Promise.all(productRefs.map((ref) => tx.get(ref)));
         }
 
         tx.update(orderRef, {
           ...data,
-          ...(willBeCancelled && !wasCancelled && !alreadyRestored ? { stockRestored: true } : {}),
+          ...(shouldRestore ? { stockRestored: true } : {}),
           updatedAt: new Date(),
         });
 
@@ -1366,9 +1364,9 @@ export const firestoreRouter = router({
       // فكان حذف أي طلب (خطأ إدخال، طلب مكرر...) يُسبّب نفس فقدان المخزون
       // التراكمي الذي أُصلح سابقاً للإلغاء. الآن نفس منطق الإرجاع بالضبط:
       // ضمن transaction ذرّية واحدة، نُرجع الكمية لكل عنصر *فقط* إذا لم يكن
-      // الطلب "ملغى" أصلاً (مخزونه أُرجع حينها) ولم يسبق إرجاعه
-      // (orderData.stockRestored) — يمنع إرجاعاً مضاعفاً سواء من استدعاء
-      // مزدوج لهذا الإجراء نفسه أو من إلغاء سابق للطلب قبل حذفه.
+      // الطلب بحالة "ملغي"/"دفع فاشل" أصلاً (مخزونه أُرجع حينها) ولم يسبق
+      // إرجاعه (orderData.stockRestored) — يمنع إرجاعاً مضاعفاً سواء من
+      // استدعاء مزدوج لهذا الإجراء نفسه أو من إلغاء/فشل دفع سابق للطلب قبل حذفه.
       const { orderData } = await adminDb.runTransaction(async (tx) => {
         const orderRef = adminDb.collection("orders").doc(input.id);
         const orderDoc = await tx.get(orderRef);
@@ -1376,9 +1374,9 @@ export const firestoreRouter = router({
           throw new TRPCError({ code: "NOT_FOUND", message: "الطلب غير موجود" });
         }
         const orderData = orderDoc.data()!;
-        const wasCancelled = orderData.status === 'cancelled';
+        const wasRestoringStatus = orderData.status === 'cancelled' || orderData.status === 'payment_failed';
         const alreadyRestored = orderData.stockRestored === true;
-        const shouldRestore = !wasCancelled && !alreadyRestored && Array.isArray(orderData.items);
+        const shouldRestore = !wasRestoringStatus && !alreadyRestored && Array.isArray(orderData.items);
 
         let productRefs: FirebaseFirestore.DocumentReference[] = [];
         let productDocs: FirebaseFirestore.DocumentSnapshot[] = [];
@@ -1435,12 +1433,13 @@ export const firestoreRouter = router({
       // ✅ إصلاح حرج (مطابق لنفس إصلاح createOrder/createDirectOrder): كان
       // إعادة رفع الإيصال هنا يضبط "paid" مباشرة بلا أي تحقق فعلي من محتوى
       // الصورة — يعني أن أي عميل يقدر يُعلّم طلبه "مدفوع" بمجرد رفع أي ملف،
-      // بصرف النظر عن اعتماد الأدمن. الآن كل رفع/إعادة رفع لإيصال يضعه
-      // "بانتظار المراجعة" حصراً، ولا يتحوّل لـ"مدفوع" إلا عبر updateOrderStatus
-      // (أدمن يملك صلاحية "orders" فقط).
+      // بصرف النظر عن اعتماد الأدمن. الآن كل رفع/إعادة رفع لإيصال يعيد الطلب
+      // "قيد المراجعة" حصراً (الحالة الموحّدة نفسها المستخدمة عند إنشاء
+      // الطلب)، ولا يتحوّل لمرحلة تالية إلا عبر updateOrderStatus (أدمن يملك
+      // صلاحية "orders" فقط).
       await orderRef.update({
         paymentReceipt: input.paymentReceipt,
-        paymentStatus: "pending_review",
+        status: "under_review",
         updatedAt: new Date(),
       });
       
@@ -1605,10 +1604,13 @@ export const firestoreRouter = router({
           totalRevenue += Number(data.total) || 0;
           completedOrders++;
         }
-        if (data.status === 'pending' || data.status === 'paid' || data.status === 'shipped') {
+        if (data.status === 'under_review' || data.status === 'processing' || data.status === 'out_for_delivery') {
           pendingOrders++;
         }
-        if (data.status !== 'cancelled' && data.items) {
+        // ✅ إعادة تنظيم: نستبعد أيضاً طلبات "دفع فاشل" من إحصاء المنتجات
+        // الأكثر مبيعاً — نفس منطق استبعاد "ملغي" أصلاً، فطلب لم يُدفع لا
+        // يُعتبر مبيعاً فعلياً.
+        if (data.status !== 'cancelled' && data.status !== 'payment_failed' && data.items) {
           data.items.forEach((item: any) => {
             if (!productSales[item.productId]) {
               productSales[item.productId] = { name: item.name, quantity: 0, revenue: 0 };

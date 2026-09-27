@@ -8,15 +8,14 @@
 // بحث برقم الطلب + فلترة بالحالة + فتح تفاصيل الطلب من الدبوس مباشرة —
 // بلا أي أدوات تحرير مضلّعات لا يحتاجها الموصّل.
 import { useEffect, useMemo, useRef, useState } from "react";
+import { Link } from "wouter";
 import { trpc } from "@/lib/trpc";
 import { toast } from "sonner";
 import AdminGuard from "@/components/AdminGuard";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Select, SelectTrigger, SelectValue, SelectContent, SelectItem } from "@/components/ui/select";
-import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetDescription } from "@/components/ui/sheet";
-import { Loader2, MapPin, ShieldAlert, Search } from "lucide-react";
+import { Loader2, MapPin, ShieldAlert, Search, ArrowRight, X } from "lucide-react";
 import { formatNumber } from "@/lib/formatters";
 import { getOrderStatusConfig, ORDER_STATUS_OPTIONS } from "@/lib/orderStatus";
 import { ORDER_STATUS_COLORS } from "@/lib/colors";
@@ -89,10 +88,13 @@ function StatusBadge({ status }: { status: string }) {
   return <span style={style} className="px-2 py-1 rounded text-xs font-semibold">{label}</span>;
 }
 
-// لوحة تفاصيل الطلب المفتوحة من الخريطة مباشرة (ضغط دبوس أو نتيجة بحث) —
-// تجلب التفاصيل الكاملة (العناصر + العنوان) وتسمح بتحديث الحالة فوراً بلا
-// تنقّل لصفحة "الطلبات" المنفصلة.
-function OrderDetailsSheet({ orderId, onClose }: { orderId: string | null; onClose: () => void }) {
+// ✅ إصلاح جذري: كانت هذه لوحة "Sheet" (مكوّن Radix يُركَّب عبر Portal في
+// document.body مع طبقة تعتيم كاملة للشاشة) — بصرياً تبدو كنافذة منبثقة
+// منفصلة عن الخريطة، وتحجب كل الصفحة خلفها. الآن لوحة "مدمجة" فعلياً داخل
+// نفس حاوية الخريطة (position: absolute نسبةً لها، لا Portal ولا تعتيم
+// كامل للشاشة) — الخريطة تبقى ظاهرة جزئياً خلفها، وتبان كجزء من نفس شاشة
+// الخريطة بدل نافذة منفصلة تعلوها.
+function OrderDetailsPanel({ orderId, onClose }: { orderId: string | null; onClose: () => void }) {
   const utils = trpc.useUtils();
   const { data: order, isLoading, error } = trpc.deliveryZones.getOrderDetailsAdmin.useQuery(
     { id: orderId ?? "" },
@@ -117,23 +119,33 @@ function OrderDetailsSheet({ orderId, onClose }: { orderId: string | null; onClo
 
   const addr = order?.shippingAddress;
   const hasLocation = !!(addr?.latitude && addr?.longitude);
+  const open = !!orderId;
 
   return (
-    <Sheet open={!!orderId} onOpenChange={(open) => !open && onClose()}>
-      <SheetContent side="left" className="w-full sm:max-w-md overflow-y-auto">
-        <SheetHeader>
-          <SheetTitle>
-            {order ? `تفاصيل الطلب #${order.orderNumber}` : "تفاصيل الطلب"}
-          </SheetTitle>
-          <SheetDescription>عرض وتحديث حالة الطلب مباشرة من الخريطة</SheetDescription>
-        </SheetHeader>
+    <div
+      // ✅ pointer-events-none وهي مغلقة: لا تحجب أي نقر على الخريطة خلفها
+      // رغم بقائها موجودة بالـDOM لإتاحة انتقال الانزلاق سلساً.
+      className={`absolute inset-y-0 left-0 z-[1000] w-full sm:w-96 bg-card border-l shadow-2xl
+        transition-transform duration-300 ease-out flex flex-col
+        ${open ? "translate-x-0 pointer-events-auto" : "-translate-x-full pointer-events-none"}`}
+      aria-hidden={!open}
+    >
+      <div className="flex items-center justify-between border-b px-4 py-3 shrink-0">
+        <h2 className="font-semibold text-sm">
+          {order ? `تفاصيل الطلب #${order.orderNumber}` : "تفاصيل الطلب"}
+        </h2>
+        <Button variant="ghost" size="icon" className="h-7 w-7" onClick={onClose}>
+          <X className="w-4 h-4" />
+        </Button>
+      </div>
 
-        {isLoading ? (
+      <div className="flex-1 min-h-0 overflow-y-auto">
+        {!open ? null : isLoading ? (
           <div className="flex justify-center py-10"><Loader2 className="w-6 h-6 animate-spin" /></div>
         ) : error || !order ? (
           <p className="text-sm text-muted-foreground py-6 text-center">تعذّر تحميل تفاصيل هذا الطلب.</p>
         ) : (
-          <div className="space-y-4 px-4 pb-4">
+          <div className="space-y-4 p-4">
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-2">
                 <StatusBadge status={order.status} />
@@ -211,8 +223,8 @@ function OrderDetailsSheet({ orderId, onClose }: { orderId: string | null; onClo
             </Button>
           </div>
         )}
-      </SheetContent>
-    </Sheet>
+      </div>
+    </div>
   );
 }
 
@@ -410,35 +422,49 @@ function OrdersClusterMap({ canViewOrders }: { canViewOrders: boolean }) {
   const showNoFilterResults = !isLoading && validLocations.length > 0 && filteredLocations.length === 0;
 
   return (
-    <Card>
-      <CardHeader>
-        <CardTitle className="flex flex-wrap items-center gap-2 justify-between">
-          <span className="flex items-center gap-2">
-            <MapPin className="w-4 h-4" /> خريطة الطلبات النشطة ({filteredLocations.length}{filteredLocations.length !== totalActive ? ` من ${totalActive}` : ""})
-          </span>
-          {/* ✅ جديد: آخر تحديث + زر تحديث يدوي — بما أن التحديث الدوري (30 ثانية)
-              لم يعد يعيد توسيط الخريطة تلقائياً، يحتاج الموصّل مؤشراً واضحاً
-              على حداثة البيانات المعروضة وقدرة على تحديثها فوراً عند الحاجة. */}
-          <span className="flex items-center gap-2 text-xs font-normal text-muted-foreground">
-            {dataUpdatedAt ? `آخر تحديث: ${new Date(dataUpdatedAt).toLocaleTimeString('ar-EG-u-nu-latn', { hour: '2-digit', minute: '2-digit' })}` : null}
-            <Button size="sm" variant="ghost" className="h-7 px-2" onClick={() => refetch()} disabled={isFetching}>
-              {isFetching ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : "تحديث الآن"}
+    // ✅ إصلاح جذري: كانت الخريطة داخل Card بحجم محدود ضمن حاوية الأدمن
+    // القياسية (سايدبار + padding + عرض أقصى) — تبدو فعلياً كصندوق صغير
+    // أشبه بنافذة منبثقة على شاشة كبيرة فارغة حولها. الآن الصفحة (بمساعدة
+    // AdminGuard fullBleed) تملأ كل الارتفاع المتاح أسفل الهيدر العلوي
+    // فعلياً: شريط أدوات مضغوط أعلى + الخريطة تأخذ كل المساحة المتبقية.
+    <div className="h-full min-h-0 flex flex-col">
+      {/* ✅ شريط رجوع صغير — لا سايدبار هنا (fullBleed)، فبدونه لا توجد أي
+          وسيلة للعودة لبقية أقسام لوحة التحكم. */}
+      <div className="border-b bg-card px-3 py-2 flex flex-wrap items-center gap-2 justify-between shrink-0">
+        <div className="flex items-center gap-2 min-w-0">
+          <Link href="/orders">
+            <Button variant="ghost" size="icon" className="h-8 w-8 shrink-0" title="العودة للطلبات">
+              <ArrowRight className="w-4 h-4" />
             </Button>
+          </Link>
+          <span className="font-semibold text-sm flex items-center gap-1.5 truncate">
+            <MapPin className="w-4 h-4 shrink-0" />
+            خريطة الطلبات النشطة ({filteredLocations.length}{filteredLocations.length !== totalActive ? ` من ${totalActive}` : ""})
           </span>
-        </CardTitle>
-      </CardHeader>
-      <CardContent className="space-y-3">
-        {!canViewOrders || error ? (
-          <div className="flex flex-col items-center gap-2 py-10 text-center text-muted-foreground">
-            <ShieldAlert className="w-6 h-6" />
-            <p className="text-sm max-w-sm">
-              {!canViewOrders
-                ? "تحتاج صلاحية \"الطلبات\" لعرض خريطة الطلبات النشطة — تواصل مع مدير الحساب لمنحك إياها."
-                : "تعذّر تحميل خريطة الطلبات. حاول مرة أخرى لاحقاً."}
-            </p>
-          </div>
-        ) : (
-          <>
+        </div>
+        {/* ✅ آخر تحديث + زر تحديث يدوي — التحديث الدوري (30 ثانية) لم يعد
+            يعيد توسيط الخريطة تلقائياً، فيحتاج الموصّل مؤشراً واضحاً على
+            حداثة البيانات وقدرة على تحديثها فوراً عند الحاجة. */}
+        <span className="flex items-center gap-2 text-xs text-muted-foreground shrink-0">
+          {dataUpdatedAt ? `آخر تحديث: ${new Date(dataUpdatedAt).toLocaleTimeString('ar-EG-u-nu-latn', { hour: '2-digit', minute: '2-digit' })}` : null}
+          <Button size="sm" variant="ghost" className="h-7 px-2" onClick={() => refetch()} disabled={isFetching}>
+            {isFetching ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : "تحديث الآن"}
+          </Button>
+        </span>
+      </div>
+
+      {!canViewOrders || error ? (
+        <div className="flex-1 min-h-0 flex flex-col items-center justify-center gap-2 text-center text-muted-foreground p-6">
+          <ShieldAlert className="w-6 h-6" />
+          <p className="text-sm max-w-sm">
+            {!canViewOrders
+              ? "تحتاج صلاحية \"الطلبات\" لعرض خريطة الطلبات النشطة — تواصل مع مدير الحساب لمنحك إياها."
+              : "تعذّر تحميل خريطة الطلبات. حاول مرة أخرى لاحقاً."}
+          </p>
+        </div>
+      ) : (
+        <>
+          <div className="border-b bg-card px-3 py-2 flex flex-col gap-2 shrink-0">
             <div className="flex flex-col sm:flex-row sm:items-center gap-2">
               {/* فلترة حسب الحالة — تحدّث الخريطة تلقائياً */}
               <div className="flex flex-wrap gap-2">
@@ -473,13 +499,13 @@ function OrdersClusterMap({ canViewOrders }: { canViewOrders: boolean }) {
                   />
                 </div>
                 <Button size="sm" variant="secondary" onClick={handleSearch}>بحث</Button>
-                {/* ✅ جديد: توسيط يدوي — يعوّض عدم إعادة التوسيط التلقائي عند كل تحديث دوري */}
+                {/* ✅ توسيط يدوي — يعوّض عدم إعادة التوسيط التلقائي عند كل تحديث دوري */}
                 <Button size="sm" variant="outline" onClick={handleRecenter} title="توسيط الخريطة على كل الطلبات الظاهرة">
                   توسيط
                 </Button>
               </div>
             </div>
-            {/* ✅ جديد: توضيح بصري لمعنى الحلقة الحمراء النابضة حول أي دبوس */}
+            {/* ✅ توضيح بصري لمعنى الحلقة الحمراء النابضة حول أي دبوس */}
             <p className="text-xs text-muted-foreground flex items-center gap-1.5">
               <span className="inline-block w-2.5 h-2.5 rounded-full border-2 border-destructive" />
               الحلقة الحمراء = طلب متأخر عن المدة المعتادة لحالته الحالية
@@ -490,30 +516,36 @@ function OrdersClusterMap({ canViewOrders }: { canViewOrders: boolean }) {
             {showNoFilterResults && (
               <p className="text-xs text-muted-foreground">لا توجد طلبات مطابقة للفلتر المحدد.</p>
             )}
+          </div>
 
+          {/* ✅ حاوية الخريطة الفعلية: position relative لتكون مرجعاً للوحة
+              التفاصيل المنزلقة (OrderDetailsPanel) بحيث تظهر "فوق" الخريطة
+              نفسها كجزء من نفس الشاشة، لا كنافذة منفصلة تحجب كل الصفحة. */}
+          <div className="relative flex-1 min-h-0">
             {isLoading ? (
-              <div className="flex justify-center py-8">
+              <div className="absolute inset-0 flex items-center justify-center">
                 <Loader2 className="w-6 h-6 animate-spin" />
               </div>
             ) : showEmptyState ? (
-              <div className="flex flex-col items-center gap-2 py-10 text-center text-muted-foreground border rounded-lg">
+              <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 text-center text-muted-foreground p-6">
                 <MapPin className="w-6 h-6" />
                 <p className="text-sm">لا توجد طلبات نشطة بإحداثيات صالحة لعرضها على الخريطة حالياً.</p>
               </div>
             ) : (
-              <div ref={containerRef} className="w-full h-[calc(100vh-320px)] min-h-[420px] rounded-lg border" />
+              <div ref={containerRef} className="absolute inset-0" />
             )}
-          </>
-        )}
-      </CardContent>
-      <OrderDetailsSheet orderId={selectedOrderId} onClose={() => setSelectedOrderId(null)} />
-    </Card>
+
+            <OrderDetailsPanel orderId={selectedOrderId} onClose={() => setSelectedOrderId(null)} />
+          </div>
+        </>
+      )}
+    </div>
   );
 }
 
 export default function DeliveryMap() {
   return (
-    <AdminGuard activeKey="deliveryMap">
+    <AdminGuard activeKey="deliveryMap" fullBleed>
       {(user) => (
         <OrdersClusterMap canViewOrders={user.isSuperAdmin || user.permissions.includes("orders")} />
       )}

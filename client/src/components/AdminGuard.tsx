@@ -7,13 +7,18 @@ import AdminSidebar from "@/components/AdminSidebar";
 
 interface AdminGuardProps {
   activeKey: string;
+  // ✅ جديد: صفحات تحتاج الشاشة كاملة فعلياً (خريطة تفاعلية مثلاً) تفعّل هذا
+  // بدل الحاوية القياسية (سايدبار + padding + عرض أقصى) التي تصلح لصفحات
+  // الجداول/النماذج العادية لكنها تُصغّر أي خريطة لمربع صغير أشبه بنافذة
+  // منبثقة بدل تجربة ملء شاشة حقيقية.
+  fullBleed?: boolean;
   children: (user: NonNullable<ReturnType<typeof useAuth>["user"]>) => ReactNode;
 }
 
 // يغلّف أي صفحة إدارية: يتحقق من الجلسة ثم من role === "admin"، ويعرض
 // السايدبار (مفلترة حسب صلاحيات الأدمن الحالي) — منطق واحد بدل تكراره في كل
 // صفحة (كان مكرراً 4 مرات داخل AdminDashboard.tsx وحدها).
-export default function AdminGuard({ activeKey, children }: AdminGuardProps) {
+export default function AdminGuard({ activeKey, fullBleed, children }: AdminGuardProps) {
   const { user, loading, roleLoading, logout } = useAuth();
 
   if (loading || roleLoading) {
@@ -39,6 +44,18 @@ export default function AdminGuard({ activeKey, children }: AdminGuardProps) {
             </Button>
           </div>
         </div>
+      </Layout>
+    );
+  }
+
+  if (fullBleed) {
+    // ✅ بلا سايدبار وبلا padding الحاوية القياسية — الصفحة تملأ كل المساحة
+    // المتبقية أسفل الهيدر العلوي فعلياً (h-full يعتمد على أن <main> بـLayout
+    // أصلاً flex-1 داخل عمود بارتفاع الشاشة على الأقل، فيرث ارتفاعاً محدَّداً
+    // تقدر min-h-0/h-full بهذا الـdiv الاستفادة منه بلا أي شريط تمرير مزدوج).
+    return (
+      <Layout>
+        <div className="h-full min-h-0 flex flex-col">{children(user)}</div>
       </Layout>
     );
   }

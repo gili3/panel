@@ -54,8 +54,8 @@ export default function AdminGuard({ activeKey, fullBleed, children }: AdminGuar
     // أصلاً flex-1 داخل عمود بارتفاع الشاشة على الأقل، فيرث ارتفاعاً محدَّداً
     // تقدر min-h-0/h-full بهذا الـdiv الاستفادة منه بلا أي شريط تمرير مزدوج).
     return (
-      <Layout>
-        <div className="h-full min-h-0 flex flex-col">{children(user)}</div>
+      <Layout fullHeight>
+        <div className="flex-1 min-h-0 flex flex-col">{children(user)}</div>
       </Layout>
     );
   }

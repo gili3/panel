@@ -19,11 +19,14 @@ import {
 
 interface LayoutProps {
   children: ReactNode;
+  // صفحات ملء الشاشة (الخريطة): ارتفاع ثابت بحجم الشاشة بدل min-h-screen،
+  // حتى يحصل المحتوى على ارتفاع محدَّد فعلياً (h-full لا يعمل تحت min-height فقط).
+  fullHeight?: boolean;
 }
 
 // شريط علوي بسيط خاص بلوحة التحكم (لا يحتوي أي روابط أو تنقّل خاص بموقع
 // العملاء) — يظهر فقط بعد تسجيل الدخول، ويوفر زر تسجيل الخروج.
-export default function Layout({ children }: LayoutProps) {
+export default function Layout({ children, fullHeight }: LayoutProps) {
   const { user, logout } = useAuth();
   const [, setLocation] = useLocation();
   // ✅ إصلاح: تسجيل الخروج كان يحدث فوراً بضغطة واحدة على الزر بلا أي تأكيد.
@@ -36,7 +39,7 @@ export default function Layout({ children }: LayoutProps) {
   };
 
   return (
-    <div className="flex flex-col min-h-screen bg-background" dir="rtl">
+    <div className={`flex flex-col bg-background ${fullHeight ? "h-dvh overflow-hidden" : "min-h-screen"}`} dir="rtl">
       {user && (
         <header className="sticky top-0 z-40 border-b bg-card">
           <div className="flex items-center justify-between px-4 py-3">
@@ -62,7 +65,7 @@ export default function Layout({ children }: LayoutProps) {
         </header>
       )}
       {user?.role === "admin" && <PushPermissionBanner />}
-      <main className="flex-1 min-h-0">{children}</main>
+      <main className={`flex-1 min-h-0 ${fullHeight ? "flex flex-col" : ""}`}>{children}</main>
 
       <AlertDialog open={showLogoutConfirm} onOpenChange={setShowLogoutConfirm}>
         <AlertDialogContent>

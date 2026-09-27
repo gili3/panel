@@ -7,7 +7,7 @@
 // (client/src/pages/DeliveryMap.tsx على /delivery-map) — هذه الصفحة أصبحت
 // مخصصة لتحرير مضلّعات مناطق التوصيل فقط، بدل خلط أداة الأدمن الإدارية
 // (رسم المناطق) مع شاشة المتابعة اللحظية التي يحتاجها الموصّل أثناء العمل.
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { trpc } from "@/lib/trpc";
 import { toast } from "sonner";
 import { Link } from "wouter";

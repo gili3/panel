@@ -29,10 +29,9 @@ export const ADMIN_SECTIONS: AdminSection[] = [
   { key: "notifications", path: "/notifications", label: "الإشعارات", icon: Bell, permission: "notifications" },
   { key: "contactMessages", path: "/contact-messages", label: "رسائل التواصل", icon: MessageSquare, permission: "contactMessages" },
   { key: "deliveryZones", path: "/delivery-zones", label: "مناطق التوصيل", icon: MapPin, permission: "deliveryZones" },
-  // ✅ إضافة: صفحة "خريطة التوصيل" المستقلة (بند 7 بمراجعة صفحة الطلبات) —
-  // نفس صلاحية "orders" (وليس "deliveryZones") لأنها بيانات طلبات فعلياً
-  // ومخصصة للموصلين، مطابقة لصلاحية إجراءات الخريطة بالسيرفر (delivery-zone-router.ts).
-  { key: "deliveryMap", path: "/delivery-map", label: "خريطة التوصيل", icon: Truck, permission: "orders" },
+  // ✅ صلاحية مستقلة "deliveryMap" — تُمنح للموصّل وحدها دون فتح بقية صفحة
+  // الطلبات (مطابقة لإجراءات الخريطة بالسيرفر في delivery-zone-router.ts).
+  { key: "deliveryMap", path: "/delivery-map", label: "خريطة الطلبات", icon: Truck, permission: "deliveryMap" },
   // ✅ إضافة (بطلب الأدمن): سجل أخطاء النظام (لوحة + سيرفر + أندرويد).
   // permission: null عمداً — تقني بالكامل وليس قسماً تجارياً كباقي الأقسام
   // أعلاه، فيجب أن يراه أي أدمن بصرف النظر عن صلاحياته التفصيلية (مطابق

@@ -1,3 +1,5 @@
+import { checkRateLimitFirestore } from "../lib/rateLimit";
+import { verifyAndConsumeOtp } from "../lib/otpVerify";
 import * as functionsV1 from "firebase-functions/v1";
 import * as admin from "firebase-admin";
 import { db } from "../lib/admin";
@@ -15,7 +17,6 @@ import { deletionOtpTemplate, newSignInTemplate } from "../lib/emailTemplates";
 
 // ─── حذف الحساب برمز تأكيد (OTP) ────────────────────────────────────────
 const OTP_TTL_MS = 10 * 60 * 1000; // 10 دقائق
-const MAX_OTP_ATTEMPTS = 5;
 
 function deletionOtpRef(uid: string) {
   return db.collection("users").doc(uid).collection("security").doc("deletionOtp");
@@ -40,6 +41,13 @@ export const requestAccountDeletionOtp = functionsV1.https.onCall(async (_data, 
     );
   }
 
+  // ✅ (Audit) لا حد سابقاً على طلب رمز الحذف: يُغرق بريد صاحب الحساب برسائل ويتيح تدوير الرمز.
+  if (!(await checkRateLimitFirestore(`request-deletion-otp:${uid}`, 5, 15 * 60 * 1000))) {
+    throw new functionsV1.https.HttpsError(
+      "resource-exhausted",
+      "طلبات كثيرة جداً، يرجى المحاولة لاحقاً"
+    );
+  }
   const otp = generateOtp();
   await deletionOtpRef(uid).set({
     hash: hashOtp(otp),
@@ -71,34 +79,14 @@ export const confirmAccountDeletion = functionsV1.https.onCall(async (data, cont
     throw new functionsV1.https.HttpsError("invalid-argument", "رمز التأكيد مطلوب");
   }
 
-  const ref = deletionOtpRef(uid);
-  const snap = await ref.get();
-  if (!snap.exists) {
-    throw new functionsV1.https.HttpsError(
-      "failed-precondition",
-      "لم يتم طلب رمز تأكيد بعد، يرجى المحاولة من البداية"
-    );
-  }
-
-  const record = snap.data() as { hash: string; expiresAt: admin.firestore.Timestamp; attempts: number };
-
-  if (record.expiresAt.toMillis() < Date.now()) {
-    await ref.delete();
-    throw new functionsV1.https.HttpsError("deadline-exceeded", "انتهت صلاحية الرمز، يرجى طلب رمز جديد");
-  }
-  if ((record.attempts ?? 0) >= MAX_OTP_ATTEMPTS) {
-    await ref.delete();
+  // ✅ (Audit) حد للمحاولات + تحقق ذرّي (راجع lib/otpVerify.ts) — كان بلا أي منهما.
+  if (!(await checkRateLimitFirestore(`confirm-deletion-otp:${uid}`, 10, 15 * 60 * 1000))) {
     throw new functionsV1.https.HttpsError(
       "resource-exhausted",
-      "عدد محاولات كبير جداً، يرجى طلب رمز جديد"
+      "طلبات كثيرة جداً، يرجى المحاولة لاحقاً"
     );
   }
-  if (hashOtp(otp) !== record.hash) {
-    await ref.update({ attempts: admin.firestore.FieldValue.increment(1) });
-    throw new functionsV1.https.HttpsError("invalid-argument", "رمز التأكيد غير صحيح");
-  }
-
-  await ref.delete();
+  await verifyAndConsumeOtp(deletionOtpRef(uid), otp);
   await admin.auth().deleteUser(uid);
   return { deleted: true };
 });

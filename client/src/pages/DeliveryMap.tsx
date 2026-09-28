@@ -8,8 +8,8 @@
 //     التحميل، بينما كود الإنشاء يعمل مرة واحدة عند أول تركيب (والحاوية
 //     غير موجودة بعد). الآن الحاوية موجودة دائماً، وحالات التحميل/الخطأ/
 //     الفراغ طبقات فوقها.
-//  2) استدعاء getZones كان يتطلب صلاحية "deliveryZones" بينما الصفحة لصلاحية
-//     "orders" فقط (خطأ FORBIDDEN صامت) — أُزيلت طبقة المناطق (مرجعية فقط).
+//  2) للخريطة صلاحية مستقلة "deliveryMap" (سيرفر + واجهة). استدعاء getZones
+//     (صلاحية deliveryZones) أُزيل لأنه كان يفشل بصمت — طبقة المناطق مرجعية فقط.
 //  3) خطأ تحديث دوري لا يخفي الخريطة بعد الآن (يُبقي آخر بيانات ناجحة).
 //  4) الارتفاع: الصفحة تعتمد Layout fullHeight بدل h-full تحت min-h-screen.
 //  5) على الجوال: البطاقة تظهر كـ Bottom Sheet بدل لوحة جانبية تحجب الخريطة.
@@ -27,6 +27,7 @@ import { Input } from "@/components/ui/input";
 import { Select, SelectTrigger, SelectValue, SelectContent, SelectItem } from "@/components/ui/select";
 import { formatNumber } from "@/lib/formatters";
 import { getOrderStatusConfig, ORDER_STATUS_OPTIONS } from "@/lib/orderStatus";
+import { userHasAdminPermission } from "@/lib/adminSections";
 import { ORDER_STATUS_COLORS } from "@/lib/colors";
 import { KHARTOUM_CENTER, TILE_URL, TILE_ATTRIBUTION } from "@/lib/mapConstants";
 
@@ -38,6 +39,10 @@ const ACTIVE_STATUSES = ["under_review", "processing", "out_for_delivery"] as co
 type ActiveStatus = (typeof ACTIVE_STATUSES)[number];
 
 // المدة (بالدقائق) التي بعدها يُعتبر الطلب "متأخراً" في حالته الحالية.
+// الحالات المتاحة للموصّل في قائمة التغيير (مطابقة لـMAP_ALLOWED_STATUSES بالسيرفر).
+const MAP_STATUS_OPTIONS = ORDER_STATUS_OPTIONS.filter((o) =>
+  ["processing", "out_for_delivery", "delivered"].includes(o.value));
+
 const STALE_MINUTES: Record<ActiveStatus, number> = {
   under_review: 30,
   processing: 60,
@@ -95,7 +100,7 @@ function OrderCard({ orderId, onClose }: { orderId: string; onClose: () => void 
 
   useEffect(() => { if (order) setStatus(order.status); }, [order?.id, order?.status]);
 
-  const update = trpc.firestore.updateOrderStatus.useMutation({
+  const update = trpc.deliveryZones.updateOrderStatusFromMap.useMutation({
     onSuccess: (_d, vars) => {
       toast.success("تم تحديث حالة الطلب");
       utils.deliveryZones.getActiveOrderLocations.invalidate();
@@ -182,15 +187,19 @@ function OrderCard({ orderId, onClose }: { orderId: string; onClose: () => void 
               <Select value={status} onValueChange={setStatus}>
                 <SelectTrigger><SelectValue placeholder="الحالة" /></SelectTrigger>
                 <SelectContent>
-                  {ORDER_STATUS_OPTIONS.map((o) => (
+                  {/* الحالة الحالية (مثل "قيد المراجعة") تظهر معطّلة للعرض فقط */}
+                  {!MAP_STATUS_OPTIONS.some((o) => o.value === order.status) && (
+                    <SelectItem value={order.status} disabled>{cfg!.label}</SelectItem>
+                  )}
+                  {MAP_STATUS_OPTIONS.map((o) => (
                     <SelectItem key={o.value} value={o.value}>{o.label}</SelectItem>
                   ))}
                 </SelectContent>
               </Select>
               <Button
                 className="w-full"
-                disabled={update.isPending || !status || status === order.status}
-                onClick={() => update.mutate({ id: order.id, status: status as any })}
+                disabled={update.isPending || !status || status === order.status || !MAP_STATUS_OPTIONS.some((o) => o.value === status)}
+                onClick={() => update.mutate({ id: order.id, status: status as "processing" | "out_for_delivery" | "delivered" })}
               >
                 {update.isPending ? <Loader2 className="w-4 h-4 animate-spin" /> : "حفظ الحالة"}
               </Button>
@@ -203,7 +212,7 @@ function OrderCard({ orderId, onClose }: { orderId: string; onClose: () => void 
 }
 
 // ── الخريطة ──────────────────────────────────────────────────────────
-function OrdersMap() {
+function OrdersMap({ canGoToOrders }: { canGoToOrders: boolean }) {
   const { data, isLoading, isFetching, error, dataUpdatedAt, refetch } =
     trpc.deliveryZones.getActiveOrderLocations.useQuery(undefined, { refetchInterval: 30_000 });
 
@@ -334,9 +343,12 @@ function OrdersMap() {
       {/* الشريط العلوي */}
       <div className="border-b bg-card px-3 py-2 flex items-center justify-between gap-2 shrink-0">
         <div className="flex items-center gap-2 min-w-0">
-          <Button asChild variant="ghost" size="icon" className="h-8 w-8 shrink-0">
-            <Link href="/orders" aria-label="العودة للطلبات"><ArrowRight className="w-4 h-4" /></Link>
-          </Button>
+          {/* زر الرجوع فقط لمن يملك صلاحية الطلبات — الموصّل بصلاحية الخريطة وحدها لا صفحة يرجع إليها */}
+          {canGoToOrders && (
+            <Button asChild variant="ghost" size="icon" className="h-8 w-8 shrink-0">
+              <Link href="/orders" aria-label="العودة للطلبات"><ArrowRight className="w-4 h-4" /></Link>
+            </Button>
+          )}
           <span className="font-semibold text-sm flex items-center gap-1.5 truncate">
             <MapPin className="w-4 h-4 shrink-0" />
             الطلبات النشطة ({visible.length}{visible.length !== pins.length ? ` من ${pins.length}` : ""})
@@ -433,12 +445,12 @@ export default function DeliveryMap() {
   return (
     <AdminGuard activeKey="deliveryMap" fullBleed>
       {(user) =>
-        user.isSuperAdmin || user.permissions.includes("orders") ? (
-          <OrdersMap />
+        userHasAdminPermission(user, "deliveryMap") ? (
+          <OrdersMap canGoToOrders={userHasAdminPermission(user, "orders")} />
         ) : (
           <div className="flex-1 flex flex-col items-center justify-center gap-2 p-6 text-center text-muted-foreground">
             <ShieldAlert className="w-6 h-6" />
-            <p className="text-sm max-w-sm">تحتاج صلاحية "الطلبات" لعرض الخريطة — تواصل مع مدير الحساب.</p>
+            <p className="text-sm max-w-sm">تحتاج صلاحية "خريطة الطلبات" لعرض الخريطة — تواصل مع مدير الحساب.</p>
           </div>
         )
       }

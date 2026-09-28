@@ -7,6 +7,7 @@ import { generateOtp, hashOtp } from "../lib/otp";
 import { normalizeEmail } from "../lib/email";
 import { verifyEmailOtpTemplate, resetPasswordOtpTemplate, passwordChangedTemplate } from "../lib/emailTemplates";
 import { checkRateLimitFirestore } from "../lib/rateLimit";
+import { verifyAndConsumeOtp } from "../lib/otpVerify";
 
 /**
  * ELEVEN STORE — تأكيد البريد واستعادة كلمة المرور عبر رمز (OTP)
@@ -23,7 +24,6 @@ import { checkRateLimitFirestore } from "../lib/rateLimit";
  */
 
 const OTP_TTL_MS = 10 * 60 * 1000; // 10 دقائق
-const MAX_OTP_ATTEMPTS = 5;
 
 function emailKey(normalizedEmail: string): string {
   // ✅ البريد قد يحتوي أحرفاً غير صالحة كمعرّف مستند Firestore (كـ"/")،
@@ -31,44 +31,8 @@ function emailKey(normalizedEmail: string): string {
   return crypto.createHash("sha256").update(normalizedEmail).digest("hex");
 }
 
-interface OtpRecord {
-  hash: string;
-  expiresAt: admin.firestore.Timestamp;
-  attempts: number;
-}
+// ✅ (Audit) التحقق من الرمز صار معاملة ذرّية مشتركة — راجع lib/otpVerify.ts
 
-async function verifyAndConsumeOtp(
-  ref: admin.firestore.DocumentReference,
-  otp: string
-): Promise<void> {
-  const snap = await ref.get();
-  if (!snap.exists) {
-    throw new functionsV1.https.HttpsError(
-      "failed-precondition",
-      "لم يتم طلب رمز تأكيد بعد، يرجى المحاولة من البداية"
-    );
-  }
-  const record = snap.data() as OtpRecord;
-
-  if (record.expiresAt.toMillis() < Date.now()) {
-    await ref.delete();
-    throw new functionsV1.https.HttpsError("deadline-exceeded", "انتهت صلاحية الرمز، يرجى طلب رمز جديد");
-  }
-  if ((record.attempts ?? 0) >= MAX_OTP_ATTEMPTS) {
-    await ref.delete();
-    throw new functionsV1.https.HttpsError(
-      "resource-exhausted",
-      "عدد محاولات كبير جداً، يرجى طلب رمز جديد"
-    );
-  }
-  if (hashOtp(otp) !== record.hash) {
-    await ref.update({ attempts: admin.firestore.FieldValue.increment(1) });
-    throw new functionsV1.https.HttpsError("invalid-argument", "رمز التأكيد غير صحيح");
-  }
-  await ref.delete();
-}
-
-// ─── تأكيد البريد الإلكتروني برمز ────────────────────────────────────────
 
 function verifyEmailOtpRef(uid: string) {
   return db.collection("users").doc(uid).collection("security").doc("verifyEmailOtp");
@@ -243,6 +207,10 @@ export const confirmPasswordResetOtp = functionsV1.https.onCall(async (data) => 
   // مختلف بمرحلة سابقة (الفحص الحقيقي الوحيد حدث بالفعل أعلاه بالرمز).
   const user = await admin.auth().getUserByEmail(email);
   await admin.auth().updateUser(user.uid, { password: newPassword });
+  // ✅ (Audit) إعادة تعيين كلمة المرور لا تكتمل أمنياً ما لم تُقطع الجلسات القائمة: مهاجم
+  // سرق جلسة/رمز تحديث قبل الاستعادة كان يبقى مسجّلاً (كوكي لوحة التحكم 14 يوماً). نُلغي
+  // كل رموز التحديث فتسقط الجلسات القديمة (verifySessionCookie(checkRevoked=true)).
+  await admin.auth().revokeRefreshTokens(user.uid);
 
   // ✅ إشعار أمني — لا نوقف نجاح العملية لو فشل الإرسال، فكلمة المرور
   // اتغيّرت فعلاً بالفعل (نفس فلسفة onUserCreated مع رسالة الترحيب)
@@ -250,7 +218,7 @@ export const confirmPasswordResetOtp = functionsV1.https.onCall(async (data) => 
     const { subject, html } = passwordChangedTemplate();
     await sendMail({ to: email, subject, html });
   } catch (err) {
-    console.error(`[confirmPasswordResetOtp] فشل إرسال إشعار تغيير كلمة المرور لـ ${email}:`, err);
+    console.error(`[confirmPasswordResetOtp] فشل إرسال إشعار تغيير كلمة المرور لـ ${email.replace(/^(.).*(@.*)$/, "$1***$2")}:`, err);
   }
 
   return { reset: true };

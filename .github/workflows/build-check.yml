@@ -13,6 +13,8 @@ on:
       - "client/**"
       - "server/**"
       - "shared/**"
+      - "tests/**"
+      - "functions/src/lib/**"
       - "package.json"
       - "pnpm-lock.yaml"
       - "vite.config.ts"

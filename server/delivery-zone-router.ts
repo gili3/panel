@@ -1,4 +1,4 @@
-// ELEVEN STORE — راوتر لوحة التحكم لمناطق التوصيل (CRUD) + خريطة الطلبات المجمّعة
+// ELEVEN STORE — راوتر لوحة التحكم لمناطق التوصيل (CRUD) + خريطة الطلبات (صلاحية "deliveryMap")
 // ─────────────────────────────────────────────────────────────────────────
 import { z } from "zod";
 import { randomUUID } from "node:crypto";
@@ -22,6 +22,10 @@ const zoneInputSchema = z.object({
 // ✅ إعادة تنظيم: تحديث القيم لتطابق حالة الطلب الموحّدة الجديدة (status
 // واحد بدل status+paymentStatus) — راجع shared/types.ts::OrderStatus.
 const ACTIVE_ORDER_STATUSES = ["under_review", "processing", "out_for_delivery"] as const;
+
+// الحالات التي يحق لصاحب صلاحية الخريطة (الموصّل) نقل الطلب إليها. الإلغاء/فشل
+// الدفع مستبعدان عمداً: يُرجعان المخزون ويخصّان صلاحية "orders" (صفحة الطلبات).
+const MAP_ALLOWED_STATUSES = ["processing", "out_for_delivery", "delivered"] as const;
 
 export const deliveryZoneRouter = router({
   // --- مناطق التوصيل: CRUD كامل، محمي بصلاحية "deliveryZones" ---
@@ -64,7 +68,7 @@ export const deliveryZoneRouter = router({
   // ✅ صلاحية "orders" (وليس "deliveryZones") لأن هذه بيانات طلبات فعلياً،
   // يفترض أن يراها أي أدمن يملك صلاحية الطلبات أصلاً بصرف النظر عن كونه
   // يدير مناطق التوصيل أيضاً أو لا.
-  getActiveOrderLocations: adminPermission("orders").query(async () => {
+  getActiveOrderLocations: adminPermission("deliveryMap").query(async () => {
     const snap = await adminDb
       .collection("orders")
       .where("status", "in", [...ACTIVE_ORDER_STATUSES])
@@ -95,8 +99,8 @@ export const deliveryZoneRouter = router({
 
   // --- تفاصيل طلب واحد كاملة (عناصر الطلب + العنوان) — تُستخدم عند الضغط
   // على دبوس بخريطة الطلبات المجمّعة لفتح تفاصيله مباشرة بلا تنقّل لصفحة
-  // أخرى. نفس صلاحية "orders" أعلاه.
-  getOrderDetailsAdmin: adminPermission("orders")
+  // أخرى. نفس صلاحية "deliveryMap" أعلاه.
+  getOrderDetailsAdmin: adminPermission("deliveryMap")
     .input(z.object({ id: z.string().min(1) }))
     .query(async ({ input }) => {
       const doc = await adminDb.collection("orders").doc(input.id).get();
@@ -108,11 +112,31 @@ export const deliveryZoneRouter = router({
         id: doc.id,
         orderNumber: data.orderNumber as string,
         status: data.status as string,
-        paymentReceipt: data.paymentReceipt as string | undefined,
         total: data.total as number,
         items: Array.isArray(data.items) ? data.items : [],
         shippingAddress: data.shippingAddress ?? null,
         createdAt: toIsoStringSafe(data.createdAt),
       };
+    }),
+
+  // --- تغيير حالة طلب من الخريطة (الموصّل). مقيَّد: الطلب يجب أن يكون نشطاً،
+  // والحالة الجديدة من MAP_ALLOWED_STATUSES فقط. لا يمسّ المخزون، وإشعار العميل
+  // يصله تلقائياً عبر Cloud Function (onOrderStatusChanged) عند تغيّر الحقل.
+  updateOrderStatusFromMap: adminPermission("deliveryMap")
+    .input(z.object({ id: z.string().min(1), status: z.enum(MAP_ALLOWED_STATUSES) }))
+    .mutation(async ({ input }) => {
+      const ref = adminDb.collection("orders").doc(input.id);
+      await adminDb.runTransaction(async (tx) => {
+        const doc = await tx.get(ref);
+        if (!doc.exists) {
+          throw new TRPCError({ code: "NOT_FOUND", message: "الطلب غير موجود" });
+        }
+        const current = doc.data()!.status as string;
+        if (!(ACTIVE_ORDER_STATUSES as readonly string[]).includes(current)) {
+          throw new TRPCError({ code: "BAD_REQUEST", message: "لا يمكن تعديل حالة هذا الطلب من الخريطة" });
+        }
+        tx.update(ref, { status: input.status, updatedAt: new Date() });
+      });
+      return { success: true };
     }),
 });

@@ -1,3 +1,6 @@
+import { planStockAction } from "./order-stock";
+import { applyStockAction } from "./order-stock-tx";
+import { isValidReceiptUrl, MAX_RECEIPT_URL_LENGTH } from "./receipt-url";
 import { adminDb, adminAuth } from "./firebase-admin";
 import admin from "firebase-admin";
 import { publicProcedure, router, protectedProcedure, adminProcedure, adminPermission } from "./_core/trpc";
@@ -844,7 +847,10 @@ export const firestoreRouter = router({
       // بالكود FORBIDDEN الذي يُترجم فعلياً إلى HTTP 403 Unauthorized، ويمنع
       // بشكل صريح قراءة فاتورة/طلب أي مستخدم آخر عبر رابط مباشر (/order/:id)
       // إلا لصاحب الطلب نفسه أو المدير.
-      if (data?.userId !== ctx.user.openId && ctx.user.role !== 'admin') {
+      // ✅ (Audit) لم يعد أي أدمن يقرأ أي طلب: يلزم صلاحية "orders" (أو سوبر أدمن) — أدمن
+      // بصلاحية قسم آخر فقط (مثل الإشعارات) كان يستطيع قراءة عناوين وهواتف كل العملاء هنا.
+      const canReadAnyOrder = ctx.user.isSuperAdmin || (ctx.user.permissions ?? []).includes("orders");
+      if (data?.userId !== ctx.user.openId && !canReadAnyOrder) {
         throw new TRPCError({ code: "FORBIDDEN", message: "غير مصرح لك بعرض هذه الفاتورة" });
       }
       return {
@@ -1302,42 +1308,25 @@ export const firestoreRouter = router({
       // نُرجع كمية كل عنصر لمخزون منتجه ضمن transaction ذرّية، ونضع علامة
       // orderData.stockRestored لمنع أي إرجاع مضاعف لاحقاً (مثال: استدعاء
       // الدالة أكثر من مرة بنفس الحالة، أو إلغاء طلب سبق أن فشل دفعه).
-      const STOCK_RESTORING_STATUSES = new Set(['cancelled', 'payment_failed']);
       const { orderData, orderNumber, userId } = await adminDb.runTransaction(async (tx) => {
         const orderDoc = await tx.get(orderRef);
         if (!orderDoc.exists) {
           throw new TRPCError({ code: "NOT_FOUND", message: "الطلب غير موجود" });
         }
         const orderData = orderDoc.data()!;
-        const wasRestoringStatus = STOCK_RESTORING_STATUSES.has(orderData.status);
-        const willBeRestoringStatus = STOCK_RESTORING_STATUSES.has(input.status);
-        const alreadyRestored = orderData.stockRestored === true;
-        const shouldRestore = willBeRestoringStatus && !wasRestoringStatus && !alreadyRestored;
 
-        let productRefs: FirebaseFirestore.DocumentReference[] = [];
-        let productDocs: FirebaseFirestore.DocumentSnapshot[] = [];
-        if (shouldRestore && Array.isArray(orderData.items)) {
-          productRefs = orderData.items.map((item: any) => adminDb.collection("products").doc(item.productId));
-          productDocs = await Promise.all(productRefs.map((ref) => tx.get(ref)));
-        }
+        // ✅ (Audit) القرار مركزي بـorder-stock.ts: "restore" عند الانتقال إلى إلغاء/فشل دفع،
+        // و"rededuct" عند الخروج منهما لحالة نشطة (كان المخزون المُرجَع يبقى بلا إعادة خصم
+        // فيُباع مرتين). الكتابة داخل نفس المعاملة عبر applyStockAction (قراءات ثم كتابات).
+        const stockAction = planStockAction(orderData.status, input.status, orderData.stockRestored === true);
+        await applyStockAction(tx, adminDb, stockAction, orderData.items);
 
         tx.update(orderRef, {
           ...data,
-          ...(shouldRestore ? { stockRestored: true } : {}),
+          ...(stockAction === "restore" ? { stockRestored: true } : {}),
+          ...(stockAction === "rededuct" ? { stockRestored: false } : {}),
           updatedAt: new Date(),
         });
-
-        if (productDocs.length > 0) {
-          productDocs.forEach((doc, idx) => {
-            if (!doc.exists) return; // المنتج قد يكون حُذف لاحقاً — لا يوجد ما نُرجع له
-            const item = orderData.items[idx];
-            const currentStock = doc.data()?.stock ?? 0;
-            tx.update(productRefs[idx], {
-              stock: currentStock + (item.quantity || 0),
-              updatedAt: new Date(),
-            });
-          });
-        }
 
         return { orderData, orderNumber: orderData.orderNumber, userId: orderData.userId };
       });
@@ -1414,35 +1403,53 @@ export const firestoreRouter = router({
 
   updateOrderReceipt: protectedProcedure
     .input(z.object({
-      orderId: z.string(),
-      paymentReceipt: z.string(),
+      orderId: z.string().min(1).max(128),
+      paymentReceipt: z.string().min(1).max(MAX_RECEIPT_URL_LENGTH),
     }))
     .mutation(async ({ input, ctx }) => {
       const orderRef = adminDb.collection("orders").doc(input.orderId);
-      const orderDoc = await orderRef.get();
-      
-      if (!orderDoc.exists) {
-        throw new TRPCError({ code: "NOT_FOUND", message: "الطلب غير موجود" });
-      }
-      
-      const orderData = orderDoc.data();
-      if (orderData?.userId !== ctx.user.openId && ctx.user.role !== 'admin') {
-        throw new TRPCError({ code: "FORBIDDEN", message: "غير مصرح لك بهذا الإجراء" });
-      }
-      
-      // ✅ إصلاح حرج (مطابق لنفس إصلاح createOrder/createDirectOrder): كان
-      // إعادة رفع الإيصال هنا يضبط "paid" مباشرة بلا أي تحقق فعلي من محتوى
-      // الصورة — يعني أن أي عميل يقدر يُعلّم طلبه "مدفوع" بمجرد رفع أي ملف،
-      // بصرف النظر عن اعتماد الأدمن. الآن كل رفع/إعادة رفع لإيصال يعيد الطلب
-      // "قيد المراجعة" حصراً (الحالة الموحّدة نفسها المستخدمة عند إنشاء
-      // الطلب)، ولا يتحوّل لمرحلة تالية إلا عبر updateOrderStatus (أدمن يملك
-      // صلاحية "orders" فقط).
-      await orderRef.update({
-        paymentReceipt: input.paymentReceipt,
-        status: "under_review",
-        updatedAt: new Date(),
+      const bucket = process.env.VITE_FIREBASE_STORAGE_BUCKET || undefined;
+
+      // ✅ (Audit) كل شيء داخل معاملة واحدة، مع ثلاث حمايات كانت مفقودة:
+      //  1) الحالة: كان يمكن لصاحب الطلب استدعاؤها في أي حالة (delivered/cancelled/
+      //     out_for_delivery...) فيُعاد الطلب إلى "under_review" — يفسد التنفيذ ويُحيي طلباً
+      //     ملغى بلا خصم مخزون. الآن فقط من "under_review" أو "payment_failed" (إعادة رفع إيصال).
+      //  2) المخزون: الخروج من payment_failed (مخزونه أُرجع) يعيد الخصم ذرّياً (applyStockAction).
+      //  3) الرابط: يجب أن يكون رابط Firebase Storage داخل receipts/<uid صاحب الطلب>/ (isValidReceiptUrl).
+      //  والصلاحية: صاحب الطلب أو من يملك "orders" (لم يعد أي أدمن كان).
+      await adminDb.runTransaction(async (tx) => {
+        const orderDoc = await tx.get(orderRef);
+        if (!orderDoc.exists) {
+          throw new TRPCError({ code: "NOT_FOUND", message: "الطلب غير موجود" });
+        }
+        const orderData = orderDoc.data()!;
+
+        const isOwner = orderData.userId === ctx.user.openId;
+        const canManageOrders = ctx.user.isSuperAdmin || (ctx.user.permissions ?? []).includes("orders");
+        if (!isOwner && !canManageOrders) {
+          throw new TRPCError({ code: "FORBIDDEN", message: "غير مصرح لك بهذا الإجراء" });
+        }
+        if (!isValidReceiptUrl(input.paymentReceipt, orderData.userId, bucket)) {
+          throw new TRPCError({ code: "BAD_REQUEST", message: "رابط إيصال الدفع غير صالح" });
+        }
+        if (orderData.status !== "under_review" && orderData.status !== "payment_failed") {
+          throw new TRPCError({
+            code: "BAD_REQUEST",
+            message: "لا يمكن رفع إيصال لهذا الطلب في حالته الحالية",
+          });
+        }
+
+        const stockAction = planStockAction(orderData.status, "under_review", orderData.stockRestored === true);
+        await applyStockAction(tx, adminDb, stockAction, orderData.items);
+
+        tx.update(orderRef, {
+          paymentReceipt: input.paymentReceipt,
+          status: "under_review",
+          ...(stockAction === "rededuct" ? { stockRestored: false } : {}),
+          updatedAt: new Date(),
+        });
       });
-      
+
       return { success: true };
     }),
 

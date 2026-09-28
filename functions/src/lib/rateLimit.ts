@@ -1,3 +1,4 @@
+import * as crypto from "crypto";
 import * as admin from "firebase-admin";
 import { db } from "./admin";
 
@@ -18,7 +19,11 @@ export async function checkRateLimitFirestore(
   max: number,
   windowMs: number
 ): Promise<boolean> {
-  const ref = db.collection("_rateLimits").doc(key);
+  // ✅ (Audit) المفتاح يتضمّن مدخلات عميل (بريد إلكتروني حرّ) — قد يحوي "/" أو يتجاوز حد طول
+  // معرّف المستند فيرمي Firestore خطأً 500 بدل رد منظّم. نستعمل بصمة ثابتة الطول.
+  const ref = db.collection("_rateLimits").doc(
+    crypto.createHash("sha256").update(key).digest("hex")
+  );
   const now = Date.now();
 
   return db.runTransaction(async tx => {

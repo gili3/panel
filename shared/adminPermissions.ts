@@ -13,6 +13,7 @@ export const ADMIN_PERMISSIONS = [
   "notifications",
   "contactMessages",
   "deliveryZones",
+  "deliveryMap",
 ] as const;
 
 export type AdminPermission = (typeof ADMIN_PERMISSIONS)[number];
@@ -30,6 +31,7 @@ export const ADMIN_PERMISSION_LABELS: Record<AdminPermission, string> = {
   notifications: "الإشعارات",
   contactMessages: "رسائل التواصل",
   deliveryZones: "مناطق التوصيل",
+  deliveryMap: "خريطة الطلبات",
 };
 
 export function isValidAdminPermission(value: string): value is AdminPermission {

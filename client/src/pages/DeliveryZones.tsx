@@ -23,6 +23,7 @@ import {
 } from "@/components/ui/alert-dialog";
 import { Loader2, MapPin, Plus, Trash2, Undo2, Save, X } from "lucide-react";
 import type { DeliveryZone, LatLng } from "@shared/deliveryZones";
+import { userHasAdminPermission } from "@/lib/adminSections";
 import { KHARTOUM_CENTER, TILE_URL, TILE_ATTRIBUTION } from "@/lib/mapConstants";
 
 // window.L محمَّل عبر <script> عادي بـindex.html (راجع التعليق أعلاه) —
@@ -300,17 +301,19 @@ function DeliveryZonesManager() {
 export default function DeliveryZones() {
   return (
     <AdminGuard activeKey="deliveryZones">
-      {() => (
+      {(user) => (
         <div className="space-y-4">
           {/* ✅ خريطة الطلبات المجمّعة أصبحت صفحة مستقلة مخصصة للموصلين — رابط
               مباشر إليها بدل تبويب ثانٍ هنا (راجع DeliveryMap.tsx). */}
-          <div className="flex justify-end">
-            <Link href="/delivery-map">
-              <Button variant="outline" size="sm" className="gap-2">
-                <MapPin className="w-4 h-4" /> فتح خريطة التوصيل
-              </Button>
-            </Link>
-          </div>
+          {userHasAdminPermission(user, "deliveryMap") && (
+            <div className="flex justify-end">
+              <Link href="/delivery-map">
+                <Button variant="outline" size="sm" className="gap-2">
+                  <MapPin className="w-4 h-4" /> فتح خريطة الطلبات
+                </Button>
+              </Link>
+            </div>
+          )}
           <DeliveryZonesManager />
         </div>
       )}

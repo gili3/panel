@@ -10,6 +10,7 @@
 // الإشعارات بسبب App Check Enforce، تعمّدنا ألا تعتمد ميزة جديدة على توفر
 // App Check توكن صحيح؛ راجع firestore.rules: مجموعة systemErrorLogs مرفوضة
 // كلياً من أي عميل مباشر (قراءة وكتابة)، فلا closure على هذه الحادثة نفسها.
+import { redactSensitive } from "./redact";
 import * as admin from "firebase-admin";
 import type { Firestore } from "firebase-admin/firestore";
 import crypto from "crypto";
@@ -55,8 +56,9 @@ function hashOf(source: ErrorLogSource, message: string): string {
  */
 export async function logSystemError(db: Firestore, input: ReportErrorInput): Promise<void> {
   try {
-    const message = (input.message || "خطأ غير معروف").slice(0, MAX_MESSAGE_LEN);
-    const stack = input.stack ? input.stack.slice(0, MAX_STACK_LEN) : null;
+    // ✅ (Audit) نُخفي التوكنات/الأسرار من النصوص قبل التجزئة والتخزين (راجع redact.ts)
+    const message = redactSensitive(input.message || "خطأ غير معروف").slice(0, MAX_MESSAGE_LEN);
+    const stack = input.stack ? redactSensitive(input.stack).slice(0, MAX_STACK_LEN) : null;
     const hash = hashOf(input.source, message);
     const now = Date.now();
     const existing = recentHashes.get(hash);
@@ -77,11 +79,11 @@ export async function logSystemError(db: Firestore, input: ReportErrorInput): Pr
       source: input.source,
       message,
       stack,
-      route: input.route ?? null,
+      route: input.route ? redactSensitive(input.route) : null,
       userId: input.userId ?? null,
       userEmail: input.userEmail ?? null,
       appVersion: input.appVersion ?? null,
-      deviceInfo: input.deviceInfo ?? null,
+      deviceInfo: input.deviceInfo ? redactSensitive(input.deviceInfo) : null,
       severity: input.severity ?? "error",
       count: 1,
       resolved: false,

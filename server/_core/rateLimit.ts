@@ -20,11 +20,31 @@ setInterval(() => {
   }
 }, 10 * 60 * 1000).unref();
 
+// ✅ (Audit) الأخذ من أول عنوان في x-forwarded-for غير آمن إن كان البروكسي *يُلحِق*
+// العنوان بنهاية القائمة (سلوك الأغلبية): العميل يقدر يرسل هيدر x-forwarded-for بقيمة عشوائية
+// جديدة بكل طلب فيتجاوز كل محدّدات الطلبات (تسجيل الدخول، verifyOrder، reportError...).
+// الحل الصحيح يعتمد على عدد البروكسيات الموثوقة أمام السيرفر (تعرفه أنت من الاستضافة):
+// اضبط RATE_LIMIT_PROXY_HOPS=N (مثلاً 1 لبروكسي واحد، 2 لو Cloudflare + موزّع الاستضافة)
+// فيؤخذ العنوان الذي أضافه أقرب بروكسي موثوق من *نهاية* القائمة. بدون المتغيّر يبقى السلوك
+// القديم كما هو (لا نخمّن بنية الاستضافة فنكسر الحد لكل المستخدمين).
+export function pickClientIp(
+  forwarded: string | string[] | undefined,
+  remoteAddress: string | undefined,
+  hops: number,
+): string {
+  const list = (Array.isArray(forwarded) ? forwarded.join(",") : forwarded ?? "")
+    .split(",")
+    .map((p) => p.trim())
+    .filter(Boolean);
+  if (hops > 0 && list.length > 0) {
+    return list[Math.max(0, list.length - hops)];
+  }
+  return (list[0] || remoteAddress || "unknown").trim();
+}
+
 function clientKey(req: Request): string {
-  // خلف بروكسي المنصة (Render/غيره) — أول عنوان في x-forwarded-for هو عنوان العميل الفعلي
-  const forwarded = req.headers["x-forwarded-for"];
-  const first = Array.isArray(forwarded) ? forwarded[0] : forwarded?.split(",")[0];
-  return (first || req.socket.remoteAddress || "unknown").trim();
+  const hops = Number.parseInt(process.env.RATE_LIMIT_PROXY_HOPS ?? "", 10);
+  return pickClientIp(req.headers["x-forwarded-for"], req.socket.remoteAddress, Number.isFinite(hops) ? hops : 0);
 }
 
 /**

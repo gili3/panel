@@ -24,6 +24,15 @@ service cloud.firestore {
       return request.auth != null;
     }
 
+    // ✅ (Audit) مسارات الشراء (إنشاء طلب، إنقاص مخزون، عدّاد الطلبات، استخدام كوبون) تشترط
+    // بريداً مؤكَّداً. التطبيق نفسه يمنع الدخول بحساب غير مؤكَّد (loginWithEmail)، لكن القواعد
+    // كانت تكتفي بـisSignedIn() فيستطيع أي حساب غير مؤكَّد (يُنشأ مباشرة عبر Firebase Auth
+    // بلا المرور بالتطبيق) تنفيذ هذه الكتابات. الحقل يُقرأ من التوكن؛ الحسابات عبر جوجل مؤكَّدة
+    // تلقائياً، وحسابات البريد تدخل دائماً بعد التأكيد بتسجيل دخول جديد (توكن جديد).
+    function isVerifiedUser() {
+      return isSignedIn() && request.auth.token.email_verified == true;
+    }
+
     function isOwner(userId) {
       return isSignedIn() && request.auth.uid == userId;
     }
@@ -91,7 +100,9 @@ service cloud.firestore {
     function validItemAt(items, i) {
       return items.size() <= i ||
         (
-          items[i].quantity is number && items[i].quantity > 0 &&
+          // ✅ (Audit) عدد صحيح فقط: كمية كسرية (0.001) كانت تمرّ فيُشترى منتج غالٍ بسعر رمزي
+          // ويظهر للأدمن طلب بكمية غير منطقية (السعر يُحسب سعر×كمية بالمنطق نفسه فيتسق ظاهرياً).
+          items[i].quantity is int && items[i].quantity > 0 &&
           items[i].price ==
             get(/databases/$(database)/documents/products/$(items[i].productId)).data.price
         );
@@ -359,7 +370,7 @@ service cloud.firestore {
       // طلب واحد بقاعدة orders/create أعلاه (أي طلب شرعي واحد لا ينقص أكثر
       // من هذا القدر من منتج واحد أساساً)، فيبطئ أي إساءة استخدام آلية أكثر
       // دون التأثير على أي استخدام حقيقي.
-      allow update: if isSignedIn() &&
+      allow update: if isVerifiedUser() &&
         onlyChangedKeys(['stock', 'updatedAt']) &&
         request.resource.data.stock is number &&
         request.resource.data.stock >= 0 &&
@@ -400,7 +411,7 @@ service cloud.firestore {
       allow read: if isSignedIn();
       // ✅ يُسمح فقط بزيادة الحقل current بمقدار 1 بالضبط — يمنع أي تلاعب
       // برقم الطلب (تخطي أرقام، إعادة استخدام رقم، إلخ)
-      allow update: if isSignedIn() &&
+      allow update: if isVerifiedUser() &&
         onlyChangedKeys(['current']) &&
         request.resource.data.current == resource.data.current + 1;
       // ✅ إصلاح (Audit L-2): "create" كانت مسموحة لأي مستخدم مسجّل دخول
@@ -411,7 +422,7 @@ service cloud.firestore {
       // نفس نقطة البداية الرسمية المستخدمة بكود التطبيق (11001000) أو أول
       // زيادة طبيعية عليها (11001001) — نفس القيمتين الوحيدتين اللتين قد
       // يكتبهما الكود الشرعي فعلياً عند أول طلب.
-      allow create: if isSignedIn() &&
+      allow create: if isVerifiedUser() &&
         request.resource.data.keys().hasOnly(['current']) &&
         request.resource.data.current is number &&
         (request.resource.data.current == 11001000 || request.resource.data.current == 11001001);
@@ -423,7 +434,11 @@ service cloud.firestore {
     // ═══════════════════════════════════════════════════════════════════
     match /coupons/{code} {
       // القراءة لأي مستخدم مسجّل دخول فقط (يلزم تسجيل الدخول أصلاً للوصول للسلة/الدفع)
-      allow read: if isSignedIn();
+      // ✅ (Audit) get فقط، وlist ممنوع: السابق `allow read` كان يسمح لأي حساب بجلب
+      // *كل* الكوبونات (الأكواد وقيمها وحدودها) بطلب قائمة واحد فيستخدم أكواد لم تُوجَّه
+      // له. التطبيق يقرأ كوبوناً واحداً بمعرّفه (coupons/{CODE}) — لا يحتاج list إطلاقاً.
+      allow get: if isSignedIn();
+      allow list: if false;
 
       // ✅ إصلاح (Audit H-2): سابقاً كان يمكن زيادة usageCount بكتابة منفصلة
       // بلا أي طلب فعلي مرتبط بها (استنزاف الكوبون / DoS على العروض). الآن
@@ -431,11 +446,16 @@ service cloud.firestore {
       // فعلياً لهذا المستخدم بهذا الكوبون تحديداً — يتحقق منه فعلياً عبر
       // discountValid()/couponDiscountValid() في قاعدة orders/create أعلاه
       // (كلا الشرطين يجب أن يتحققا معاً بما أنهما كتابتان بنفس المعاملة).
-      allow update: if isSignedIn() &&
+      allow update: if isVerifiedUser() &&
         onlyChangedKeys(['usageCount', 'updatedAt']) &&
         resource.data.isActive == true &&
         request.resource.data.usageCount == resource.data.usageCount + 1 &&
-        !exists(/databases/$(database)/documents/coupons/$(code)/usedBy/$(request.auth.uid));
+        !exists(/databases/$(database)/documents/coupons/$(code)/usedBy/$(request.auth.uid)) &&
+        // ✅ (Audit) التعليق أعلاه يَعِد بأن الزيادة تحدث "ضمن نفس المعاملة" لكن الشرط لم يكن
+        // يفرضه: أي حساب كان يكرّر usageCount+1 بلا حدود ما دام لم ينشئ سجل usedBy، فيستنزف
+        // usageLimit لأي كوبون (DoS على العروض). الآن يجب أن يُنشأ سجل usedBy لهذا المستخدم
+        // بنفس الكتابة/المعاملة — فيُحسب على الأكثر استخدام واحد لكل حساب لكل كوبون.
+        existsAfter(/databases/$(database)/documents/coupons/$(code)/usedBy/$(request.auth.uid));
 
       allow create, delete: if false; // فقط عبر لوحة التحكم (Admin SDK)
 
@@ -499,7 +519,7 @@ service cloud.firestore {
       //     حقيقي ومستقل حتى ضد كتابة مباشرة لقاعدة البيانات خارج التطبيق تماماً.
       //   • (Audit H-2/M-4) الخصم مرتبط وجوباً بكوبون صالح تُحدَّث حالته usageCount
       //     ويُسجَّل استخدامه لهذا المستخدم ضمن نفس المعاملة، عبر discountValid().
-      allow create: if isSignedIn() &&
+      allow create: if isVerifiedUser() &&
         request.resource.data.userId == request.auth.uid &&
         request.resource.data.status.lower() == 'under_review' &&
         request.resource.data.items is list &&

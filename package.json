@@ -13,6 +13,7 @@
     "lint": "eslint .",
     "lint:fix": "eslint . --fix",
     "test": "vitest run",
+    "test:rules": "firebase emulators:exec --only firestore,storage --project demo-eleven \"vitest run -c vitest.rules.config.ts\"",
     "install:force": "pnpm install --no-frozen-lockfile",
     "update:lock": "pnpm update --no-frozen-lockfile",
     "algolia:backfill": "tsx scripts/backfill-algolia.ts",
@@ -88,6 +89,8 @@
     "zod": "^4.1.12"
   },
   "devDependencies": {
+    "@firebase/rules-unit-testing": "^4.0.1",
+    "firebase-tools": "^14.0.0",
     "@builder.io/vite-plugin-jsx-loc": "^0.1.1",
     "@eslint/js": "^9.15.0",
     "eslint": "^9.15.0",

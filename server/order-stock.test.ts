@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { findInsufficientStock, planStockAction } from "./order-stock";
+import { findInsufficientStock, mergeOrderItemQuantities, planStockAction } from "./order-stock";
 
 describe("planStockAction — مزامنة المخزون مع الحالة", () => {
   it("الانتقال إلى إلغاء/فشل دفع لأول مرة → restore", () => {
@@ -39,5 +39,21 @@ describe("findInsufficientStock", () => {
   });
   it("يعيد أسماء المنتجات ناقصة المخزون (وحذف المنتج = غير كافٍ)", () => {
     expect(findInsufficientStock(items, { a: 1, b: undefined })).toEqual(["منتج أ", "منتج ب"]);
+  });
+});
+
+describe("mergeOrderItemQuantities", () => {
+  it("يجمع كميات نفس المنتج المكرَّر بسطرين أو أكثر في سطر واحد", () => {
+    expect(mergeOrderItemQuantities([
+      { productId: "p1", quantity: 1 },
+      { productId: "p1", quantity: 1 },
+      { productId: "p2", quantity: 3 },
+    ])).toEqual([{ productId: "p1", quantity: 2 }, { productId: "p2", quantity: 3 }]);
+  });
+  it("لا يغيّر ترتيب أو قيم الأسطر غير المكرَّرة", () => {
+    expect(mergeOrderItemQuantities([{ productId: "a", quantity: 5 }])).toEqual([{ productId: "a", quantity: 5 }]);
+  });
+  it("قائمة فارغة تُعيد قائمة فارغة", () => {
+    expect(mergeOrderItemQuantities([])).toEqual([]);
   });
 });

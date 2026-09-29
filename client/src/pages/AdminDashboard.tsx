@@ -1965,6 +1965,10 @@ export default function AdminDashboard() {
                           <Input
                             id="coupon-discount-value"
                             type="number"
+                            // ✅ (Audit) لا حدّ أعلى كان موجوداً — خطأ كتابي (500 بدل 50) عند
+                            // نوع "نسبة مئوية" كان يُقبل بلا أي تنبيه بالواجهة. هذا تنبيه فوري
+                            // فقط (لا يمنع اللصق برمجياً)؛ الرفض الفعلي في السيرفر (zod refine).
+                            max={couponForm.discountType === "percentage" ? 100 : undefined}
                             value={couponForm.discountValue || ""}
                             onChange={(e) => setCouponForm({ ...couponForm, discountValue: Number(e.target.value) })}
                           />

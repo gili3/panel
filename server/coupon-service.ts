@@ -43,9 +43,15 @@ export function checkCoupon(coupon: CouponDoc | undefined, subtotal: number): Co
     return { valid: false, message: "تم استنفاد عدد مرات استخدام هذا الكود" };
   }
 
-  const discountAmount = coupon.discountType === "percentage"
+  // ✅ (Audit) خصم النسبة المئوية لم يكن مُقيَّداً بمجموع الطلب — خطأ كتابي في لوحة
+  // التحكم (discountValue=500 بدل 50 مثلاً) كان يُنتج discountAmount أكبر من subtotal
+  // نفسه، فيصبح إجمالي الطلب سالباً (calculateOrderTotal = subtotal - discount +
+  // shipping). الآن كلا النوعين مقيَّد بحد أقصى = المجموع الفرعي (النوع "fixed" كان
+  // مقيَّداً أصلاً بـMath.min؛ النسبة المئوية تنضم لنفس الحماية بلا استثناء).
+  const rawDiscount = coupon.discountType === "percentage"
     ? subtotal * (coupon.discountValue / 100)
-    : Math.min(coupon.discountValue, subtotal);
+    : coupon.discountValue;
+  const discountAmount = Math.min(rawDiscount, subtotal);
 
   return { valid: true, discountAmount: Math.round(discountAmount * 100) / 100, coupon };
 }

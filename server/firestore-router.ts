@@ -1,4 +1,4 @@
-import { planStockAction } from "./order-stock";
+import { mergeOrderItemQuantities, planStockAction } from "./order-stock";
 import { applyStockAction } from "./order-stock-tx";
 import { isValidReceiptUrl, MAX_RECEIPT_URL_LENGTH } from "./receipt-url";
 import { adminDb, adminAuth } from "./firebase-admin";
@@ -92,7 +92,19 @@ async function runOrderPricingTransaction(
 ) {
   const counterRef = adminDb.collection("counters").doc("orders");
 
+  // ✅ (Audit) دمج الأسطر المكرَّرة بنفس المنتج *قبل* أي قراءة — الفحص السابق كان
+  // يتحقق من كل سطر بمفرده مقابل نفس رصيد المخزون الأصلي (product.stock)، والكتابة
+  // النهائية لنفس مستند المنتج داخل معاملة واحدة تُطبَّق مرة واحدة فقط (آخر tx.update
+  // على نفس المرجع يُلغي ما قبله ولا يتراكم معه). فطلب لنفس المنتج بسطرين (مثلاً
+  // كمية 1 مرتين، والمخزون = 1) كان يجتاز فحص كل سطر على حدة (1 > 1 خطأ لكل سطر)،
+  // ويُحسَب السعر على كمية 2 فعلياً، بينما يُخصَم من المخزون كمية سطر واحد فقط —
+  // بيع فوق المخزون الحقيقي مع خصم أقل مما بيع. لا علاقة له بتكرار الأندرويد نفسه
+  // (تلك حماية واجهة فقط)؛ أي استدعاء مباشر لهذا الإجراء (bypass للتطبيق) يبقى مكشوفاً
+  // بدون هذا الدمج هنا في مصدر الحقيقة الوحيد.
+  const mergedItems = mergeOrderItemQuantities(items);
+
   return adminDb.runTransaction(async (tx) => {
+    const items = mergedItems;
     const productRefs = items.map(item => adminDb.collection("products").doc(item.productId));
     const productDocs = await Promise.all(productRefs.map(ref => tx.get(ref)));
     const settingsDoc = await tx.get(adminDb.collection("settings").doc("store"));
@@ -275,7 +287,13 @@ export const firestoreRouter = router({
       minOrderAmount: z.number().min(0).default(0),
       usageLimit: z.number().min(0).default(0),
       expiresAt: z.string().optional(), // ISO date, optional
-    }))
+    }).refine(
+      // ✅ (Audit) نسبة مئوية فوق 100 غير منطقية إطلاقاً كإعداد كوبون (خصم "-150%"
+      // لا معنى تجارياً له) — checkCoupon يُقيِّد الأثر النهائي دفاعياً، لكن الأفضل
+      // رفض القيمة الخاطئة من مصدرها بدل السماح بتخزينها ثم تحييد أثرها لاحقاً فقط.
+      (v) => v.discountType !== "percentage" || v.discountValue <= 100,
+      { message: "نسبة الخصم يجب ألا تتجاوز 100%", path: ["discountValue"] },
+    ))
     .mutation(async ({ input, ctx }) => {
       const code = input.code.trim().toUpperCase();
       const ref = adminDb.collection("coupons").doc(code);
@@ -306,7 +324,14 @@ export const firestoreRouter = router({
       minOrderAmount: z.number().min(0).optional(),
       usageLimit: z.number().min(0).optional(),
       expiresAt: z.string().nullable().optional(), // null = إزالة تاريخ الانتهاء
-    }))
+    }).refine(
+      // ✅ (Audit) نفس تحقق createCoupon أعلاه — يغطي الحالة الشائعة فعلياً (لوحة
+      // التحكم ترسل النوع والقيمة معاً دائماً بكل حفظ). تعديل يرسل discountValue
+      // وحدها فوق 100 بلا إرسال discountType معها (خارج واجهة اللوحة الحالية)
+      // يبقى محمياً لاحقاً بسقف checkCoupon الدفاعي رغم ذلك.
+      (v) => v.discountType !== "percentage" || v.discountValue === undefined || v.discountValue <= 100,
+      { message: "نسبة الخصم يجب ألا تتجاوز 100%", path: ["discountValue"] },
+    ))
     .mutation(async ({ input, ctx }) => {
       const { code, expiresAt, ...rest } = input;
       const update: Record<string, any> = { ...rest, updatedAt: new Date() };
@@ -875,6 +900,13 @@ export const firestoreRouter = router({
       paymentReceipt: z.string().optional(),
     }))
     .mutation(async ({ input, ctx }) => {
+      // ✅ (Audit) نفس الثغرة التي أُصلحت بـupdateOrderReceipt: paymentReceipt كان
+      // نصاً حراً بلا أي تحقق — رابط تصيّد/javascript: أو إيصال مستخدم آخر كان يُقبل
+      // ويُخزَّن مباشرة، ويظهر للأدمن في لوحة التحكم كصورة/رابط.
+      if (input.paymentReceipt && !isValidReceiptUrl(input.paymentReceipt, ctx.user.openId, process.env.VITE_FIREBASE_STORAGE_BUCKET)) {
+        throw new TRPCError({ code: "BAD_REQUEST", message: "رابط إيصال الدفع غير صالح" });
+      }
+
       const verificationToken = generateVerificationToken();
       const couponCode = input.couponCode?.trim().toUpperCase();
 
@@ -941,6 +973,13 @@ export const firestoreRouter = router({
       paymentReceipt: z.string().optional(),
     }))
     .mutation(async ({ input, ctx }) => {
+      // ✅ (Audit) نفس الثغرة التي أُصلحت بـupdateOrderReceipt: paymentReceipt كان
+      // نصاً حراً بلا أي تحقق — رابط تصيّد/javascript: أو إيصال مستخدم آخر كان يُقبل
+      // ويُخزَّن مباشرة، ويظهر للأدمن في لوحة التحكم كصورة/رابط.
+      if (input.paymentReceipt && !isValidReceiptUrl(input.paymentReceipt, ctx.user.openId, process.env.VITE_FIREBASE_STORAGE_BUCKET)) {
+        throw new TRPCError({ code: "BAD_REQUEST", message: "رابط إيصال الدفع غير صالح" });
+      }
+
       const verificationToken = generateVerificationToken();
       const couponCode = input.couponCode?.trim().toUpperCase();
 

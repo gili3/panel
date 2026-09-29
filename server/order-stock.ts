@@ -30,3 +30,18 @@ export function findInsufficientStock(
     .filter((it) => (currentStockById[it.productId] ?? 0) < (it.quantity || 0))
     .map((it) => it.name || it.productId);
 }
+
+/** يدمج أسطر الطلب المكرَّرة لنفس المنتج بجمع كمياتها في سطر واحد — يمنع
+ * تكرار نفس المنتج بسطرين من التحايل على فحص المخزون (كل سطر يُفحَص مقابل
+ * نفس الرصيد الأصلي) وعلى خصم المخزون (آخر كتابة لنفس المستند بمعاملة واحدة
+ * تُلغي ما قبلها). راجع الاستخدام بـrunOrderPricingTransaction (firestore-router.ts).
+ */
+export function mergeOrderItemQuantities<T extends { productId: string; quantity: number }>(
+  items: readonly T[],
+): Array<{ productId: string; quantity: number }> {
+  const qtyById = new Map<string, number>();
+  for (const it of items) {
+    qtyById.set(it.productId, (qtyById.get(it.productId) ?? 0) + it.quantity);
+  }
+  return [...qtyById].map(([productId, quantity]) => ({ productId, quantity }));
+}

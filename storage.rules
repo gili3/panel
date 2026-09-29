@@ -22,6 +22,19 @@ service firebase.storage {
         firestore.get(/databases/(default)/documents/users/$(request.auth.uid)).data.role == 'admin';
     }
 
+    // ✅ (Audit) isAdmin() وحدها كانت تكفي للرفع/الحذف بكل مجلدات صور المتجر —
+    // أي أدمن، حتى بصلاحية واحدة محصورة مثل "رسائل التواصل" فقط، كان يقدر يرفع أو
+    // يحذف صور المنتجات عبر استدعاء Storage SDK مباشرة (من أدوات المطوّر بالمتصفح
+    // مثلاً)، متجاوزاً تماماً فحص adminPermission("products") المطبَّق بلوحة التحكم
+    // نفسها. اسم كل مجلد هنا يطابق حرفياً اسم صلاحيته بـADMIN_PERMISSIONS
+    // (shared/adminPermissions.ts)، فالتحقق بسيط: الصلاحية يجب أن تكون بمصفوفة
+    // المستخدم. صاحب المتجر (ENV.ownerOpenId) يبقى يعمل بلا أي تغيير — buildUser.ts
+    // يضمن كتابة كل الصلاحيات بمستنده فوراً عند أول طلب مصادَق (راجع server/_core/buildUser.ts).
+    function hasPermission(perm) {
+      return isAdmin() &&
+        perm in firestore.get(/databases/(default)/documents/users/$(request.auth.uid)).data.adminPermissions;
+    }
+
     function isValidImage() {
       return request.resource.size < 10 * 1024 * 1024 && // ✅ نفس الحد المستخدم بكود الرفع (10MB)
         request.resource.contentType.matches('image/(jpeg|png|webp|gif)');
@@ -36,10 +49,10 @@ service firebase.storage {
       allow read: if folder in ['products', 'categories', 'banners', 'brands', 'notifications'];
 
       allow create: if folder in ['products', 'categories', 'banners', 'brands', 'notifications'] &&
-        isAdmin() && isValidImage();
+        hasPermission(folder) && isValidImage();
 
       allow update, delete: if folder in ['products', 'categories', 'banners', 'brands', 'notifications'] &&
-        isAdmin();
+        hasPermission(folder);
     }
 
     // ═══════════════════════════════════════════════════════════════════

@@ -12,7 +12,7 @@ import {
   type RulesTestEnvironment,
 } from "@firebase/rules-unit-testing";
 import { collection, doc, getDoc, getDocs, setDoc, updateDoc, writeBatch } from "firebase/firestore";
-import { ref, uploadBytes, getBytes } from "firebase/storage";
+import { ref, uploadBytes, getBytes, deleteObject } from "firebase/storage";
 
 let env: RulesTestEnvironment;
 
@@ -36,7 +36,10 @@ beforeEach(async () => {
     const db = ctx.firestore();
     await setDoc(doc(db, "users/u1"), { name: "عميل 1" });
     await setDoc(doc(db, "users/u2"), { name: "عميل 2" });
-    await setDoc(doc(db, "users/adm"), { role: "admin" });
+    await setDoc(doc(db, "users/adm"), { role: "admin", adminPermissions: ["products", "categories", "banners", "brands", "notifications"] });
+    // أدمن حقيقي (role: admin) لكن بصلاحية واحدة محصورة لا علاقة لها بالصور — يحاكي
+    // موظف دعم بصلاحية "رسائل التواصل" فقط يملك بيانات اعتماد أدمن صالحة.
+    await setDoc(doc(db, "users/adm-limited"), { role: "admin", adminPermissions: ["contactMessages"] });
     await setDoc(doc(db, "products/p1"), { name: "منتج", price: 100, stock: 50, isActive: true });
     await setDoc(doc(db, "settings/store"), { shippingCost: 30, freeShippingThreshold: 0 });
     await setDoc(doc(db, "coupons/SAVE10"), {
@@ -125,7 +128,22 @@ describe("التلاعب بالأسعار والكميات والشحن (إنش�
   it("خصم بلا كوبون يُرفض", async () => {
     const db = verified("u1").firestore();
     await assertFails(setDoc(doc(db, "orders/bad7"), validOrder({ discount: 50, total: 80 })));
+    it("لا تُوقِف القواعد نفسها هذا الالتفاف — التحقق الفعلي بمعاملة السيرفر (mergeOrderItemQuantities)", async () => {
+    // ⚠️ ملاحظة: هذا الاختبار يوثّق حداً معروفاً لقواعد Firestore، وليس فحص إصلاح.
+    // القواعد تتحقق من *شكل* المستند فقط، لا من مخزون المنتج الفعلي عبر مستندات
+    // متعددة — فلا يمكنها وحدها منع الالتفاف بسطرين لنفس المنتج؛ الإصلاح الحقيقي
+    // بمعاملة السيرفر (runOrderPricingTransaction + mergeOrderItemQuantities)
+    // مغطّى باختبارات وحدة منفصلة (server/order-stock.test.ts)، لا هنا.
+    const db = verified("u1").firestore();
+    await assertSucceeds(setDoc(doc(db, "orders/dup1"), validOrder({
+      items: [
+        { productId: "p1", name: "منتج", quantity: 1, price: 100 },
+        { productId: "p1", name: "منتج", quantity: 1, price: 100 },
+      ],
+      subtotal: 200, total: 230,
+    })));
   });
+});
 });
 
 describe("حسابات غير مؤكَّدة البريد", () => {
@@ -202,10 +220,27 @@ describe("Storage: الإيصالات والصور", () => {
     await assertSucceeds(getBytes(ref(st2, "receipts/u2/x.jpg")));
     await assertFails(uploadBytes(ref(st2, "receipts/u2/x.jpg"), png, { contentType: "image/jpeg" }));
   });
-  it("العميل العادي لا يرفع لمجلدات المتجر، والأدمن يرفع", async () => {
+  it("العميل العادي لا يرفع لمجلدات المتجر، والأدمن بصلاحية products يرفع لها", async () => {
     const st = env.authenticatedContext("u1").storage();
     await assertFails(uploadBytes(ref(st, "products/hack.png"), png, { contentType: "image/png" }));
     const adm = env.authenticatedContext("adm").storage();
     await assertSucceeds(uploadBytes(ref(adm, "products/ok.png"), png, { contentType: "image/png" }));
+  });
+  it("أدمن حقيقي بصلاحية محصورة (لا 'products' ولا 'banners') لا يرفع ولا يحذف صور منتجات أو بانرات — الصلاحية العامة role:admin لا تكفي وحدها", async () => {
+    await env.withSecurityRulesDisabled(async (ctx) => {
+      await uploadBytes(ref(ctx.storage(), "banners/existing.png"), png, { contentType: "image/png" });
+    });
+    const limited = env.authenticatedContext("adm-limited").storage();
+    await assertFails(uploadBytes(ref(limited, "products/x.png"), png, { contentType: "image/png" }));
+    await assertFails(uploadBytes(ref(limited, "banners/existing.png"), png, { contentType: "image/png" })); // استبدال أيضاً ممنوع
+    await assertFails(deleteObject(ref(limited, "banners/existing.png")));
+  });
+  it("أدمن بصلاحية 'banners' فقط يرفع لمجلد البانرات لكن ليس لمجلد المنتجات", async () => {
+    await env.withSecurityRulesDisabled(async (ctx) => {
+      await setDoc(doc(ctx.firestore(), "users/adm-banners"), { role: "admin", adminPermissions: ["banners"] });
+    });
+    const bannersAdmin = env.authenticatedContext("adm-banners").storage();
+    await assertSucceeds(uploadBytes(ref(bannersAdmin, "banners/ok.png"), png, { contentType: "image/png" }));
+    await assertFails(uploadBytes(ref(bannersAdmin, "products/nope.png"), png, { contentType: "image/png" }));
   });
 });

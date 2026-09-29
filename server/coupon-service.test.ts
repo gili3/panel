@@ -118,3 +118,15 @@ describe("checkCoupon", () => {
     if (result.valid) expect(result.discountAmount).toBe(25);
   });
 });
+
+describe("سقف الخصم — لا يتجاوز أبداً المجموع الفرعي", () => {
+  it("نسبة مئوية أكبر من 100% (خطأ كتابي بلوحة التحكم) تُقيَّد بالمجموع الفرعي، لا تتجاوزه", () => {
+    const result = checkCoupon(makeCoupon({ discountType: "percentage", discountValue: 500 }), 100);
+    expect(result.valid).toBe(true);
+    if (result.valid) expect(result.discountAmount).toBe(100);
+  });
+  it("نسبة 100% بالضبط تبقى تساوي المجموع الفرعي (لا كسر عن السلوك القديم الموثَّق أعلاه)", () => {
+    const result = checkCoupon(makeCoupon({ discountType: "percentage", discountValue: 100 }), 300);
+    if (result.valid) expect(result.discountAmount).toBe(300);
+  });
+});

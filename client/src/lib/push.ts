@@ -57,7 +57,7 @@ export async function registerServiceWorkerOnly(): Promise<boolean> {
     return false;
   }
   try {
-    const registration = await navigator.serviceWorker.register(SERVICE_WORKER_URL, { scope: "/" });
+    await navigator.serviceWorker.register(SERVICE_WORKER_URL, { scope: "/" });
     await navigator.serviceWorker.ready;
     console.log("[Push] Service Worker registered successfully");
     return true;

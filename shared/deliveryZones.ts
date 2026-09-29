@@ -70,9 +70,10 @@ export function activeZonesBoundingBox(zones: DeliveryZone[]): { minLat: number;
 }
 
 export function isValidLatLng(v: unknown): v is LatLng {
+  if (typeof v !== "object" || v === null) return false;
+  const { lat, lng } = v as Record<string, unknown>;
   return (
-    typeof v === "object" && v !== null &&
-    typeof (v as any).lat === "number" && typeof (v as any).lng === "number" &&
-    Math.abs((v as any).lat) <= 90 && Math.abs((v as any).lng) <= 180
+    typeof lat === "number" && typeof lng === "number" &&
+    Math.abs(lat) <= 90 && Math.abs(lng) <= 180
   );
 }

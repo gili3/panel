@@ -75,7 +75,7 @@ export const adminUsersRouter = router({
   // فقط إخفاءً بالواجهة).
   setUserDisabled: adminPermission("users")
     .input(z.object({ uid: z.string(), disabled: z.boolean() }))
-    .mutation(async ({ ctx, input }) => {
+    .mutation(async ({ input }) => {
       if (input.uid === ENV.ownerOpenId) {
         throw new TRPCError({ code: "FORBIDDEN", message: "لا يمكن حظر صاحب المتجر" });
       }

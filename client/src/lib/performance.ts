@@ -34,8 +34,8 @@ export function setupImageLazyLoading(): void {
  */
 export function getOptimizedImageUrl(
   url: string,
-  width: number = 400,
-  height: number = 400
+  _width: number = 400,
+  _height: number = 400
 ): string {
   // إذا كانت الصورة من Firebase Storage، يمكنك إضافة معاملات التحسين
   if (url.includes("firebasestorage.googleapis.com")) {
@@ -60,7 +60,7 @@ export function measurePagePerformance(): void {
       });
 
       observer.observe({ entryTypes: ["measure", "navigation"] });
-    } catch (e) {
+    } catch {
       console.warn("Performance monitoring not available");
     }
   }

@@ -98,7 +98,9 @@ function OrderCard({ orderId, onClose }: { orderId: string; onClose: () => void 
   const { data: order, isLoading, error } = trpc.deliveryZones.getOrderDetailsAdmin.useQuery({ id: orderId });
   const [status, setStatus] = useState<string>("");
 
-  useEffect(() => { if (order) setStatus(order.status); }, [order?.id, order?.status]);
+  const orderKey = order?.id;
+  const orderStatus = order?.status;
+  useEffect(() => { if (orderStatus) setStatus(orderStatus); }, [orderKey, orderStatus]);
 
   const update = trpc.deliveryZones.updateOrderStatusFromMap.useMutation({
     onSuccess: (_d, vars) => {
@@ -300,7 +302,8 @@ function OrdersMap({ canGoToOrders }: { canGoToOrders: boolean }) {
   const toggle = (s: string) => {
     setActive((prev) => {
       const next = new Set(prev);
-      next.has(s) ? next.delete(s) : next.add(s);
+      if (next.has(s)) next.delete(s);
+      else next.add(s);
       return next;
     });
     fittedRef.current = false; // يوسّط على النتيجة الجديدة بعد تغيير الفلتر

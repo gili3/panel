@@ -71,7 +71,8 @@ export default function Login() {
       httpsCallable(functions, "notifyNewSignIn")({ method: "Google" }).catch(() => {});
       toast.success("تم تسجيل الدخول بنجاح");
       setLocation("/");
-    } catch (err: any) {
+    } catch (err: unknown) {
+      console.error("[Login] Google sign-in failed:", err);
       const msg = "فشل تسجيل الدخول عبر Google";
       setError(msg);
       toast.error(msg);
@@ -93,7 +94,8 @@ export default function Login() {
       await sendReset({ email: forgotEmail });
       toast.success("إذا كان البريد مسجّلاً لدينا، ستصلك رسالة فيها رمز من 6 أرقام خلال لحظات");
       setOtpSent(true);
-    } catch (err: any) {
+    } catch (err: unknown) {
+      console.error("[Login] sendPasswordResetOtp failed:", err);
       toast.error("تعذّر إرسال الطلب، تحقق من اتصالك وحاول مرة أخرى");
     } finally {
       setForgotLoading(false);
@@ -114,10 +116,11 @@ export default function Login() {
       setForgotEmail("");
       setOtp("");
       setNewPassword("");
-    } catch (err: any) {
-      const msg = err.code === "functions/invalid-argument" ? "الرمز غير صحيح"
-        : err.code === "functions/deadline-exceeded" ? "انتهت صلاحية الرمز، يرجى طلب رمز جديد"
-        : err.code === "functions/resource-exhausted" ? "عدد محاولات كبير جداً، حاول لاحقاً"
+    } catch (err: unknown) {
+      const code = (err as { code?: string } | null)?.code;
+      const msg = code === "functions/invalid-argument" ? "الرمز غير صحيح"
+        : code === "functions/deadline-exceeded" ? "انتهت صلاحية الرمز، يرجى طلب رمز جديد"
+        : code === "functions/resource-exhausted" ? "عدد محاولات كبير جداً، حاول لاحقاً"
         : "تعذّر إتمام العملية، تحقق من الرمز وحاول مرة أخرى";
       toast.error(msg);
     } finally {

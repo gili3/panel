@@ -11,7 +11,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Switch } from "@/components/ui/switch";
 import { useAuth } from "@/_core/hooks/useAuth";
 import {
-  BarChart3, ShoppingBag, DollarSign, Plus, Edit2, Trash2, Loader2, AlertCircle,
+  ShoppingBag, DollarSign, Plus, Edit2, Trash2, Loader2, AlertCircle,
   X, Upload, Users, Package, TrendingUp, Clock, CheckCircle, ChevronDown, ChevronUp,
   Image as ImageIcon, Settings, ShoppingCart, Star, Tag, Palette, RotateCcw, MapPin
 } from "lucide-react";
@@ -767,7 +767,7 @@ export default function AdminDashboard() {
       const { id, ...rest } = data;
       updateProduct.mutate({ id, ...rest });
     } else {
-      const { id, ...rest } = data;
+      const { id: _id, ...rest } = data;
       createProduct.mutate(rest);
     }
   };
@@ -778,7 +778,7 @@ export default function AdminDashboard() {
       const { id, ...data } = categoryForm;
       updateCategory.mutate({ id, ...data });
     } else {
-      const { id, ...data } = categoryForm;
+      const { id: _id, ...data } = categoryForm;
       createCategory.mutate(data);
     }
   };
@@ -789,7 +789,7 @@ export default function AdminDashboard() {
       const { id, ...data } = bannerForm;
       updateBanner.mutate({ id, ...data });
     } else {
-      const { id, ...data } = bannerForm;
+      const { id: _id, ...data } = bannerForm;
       createBanner.mutate(data);
     }
   };
@@ -803,7 +803,7 @@ export default function AdminDashboard() {
       const { id, ...data } = brandForm;
       updateBrand.mutate({ id, ...data });
     } else {
-      const { id, ...data } = brandForm;
+      const { id: _id, ...data } = brandForm;
       createBrand.mutate(data);
     }
   };
@@ -1060,7 +1060,7 @@ export default function AdminDashboard() {
         images: prev.images.filter((_, i) => i !== index)
       }));
       toast.success("🗑️ تم حذف الصورة");
-    } catch (error) {
+    } catch {
       toast.error("⚠️ فشل حذف الصورة من التخزين");
       setProductForm((prev) => ({
         ...prev,

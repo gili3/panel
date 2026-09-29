@@ -1,5 +1,4 @@
 import admin from "firebase-admin";
-import { ENV } from "./_core/env";
 
 if (!admin.apps.length) {
   try {

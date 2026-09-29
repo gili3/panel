@@ -98,7 +98,6 @@ function ZonePolygonMap({
       }
     });
     referenceLayerRef.current = group;
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [referenceZones]);
 
   return <div ref={containerRef} className="w-full h-[360px] rounded-lg border" />;

@@ -3,13 +3,12 @@ import { applyStockAction } from "./order-stock-tx";
 import { isValidReceiptUrl, MAX_RECEIPT_URL_LENGTH } from "./receipt-url";
 import { adminDb, adminAuth } from "./firebase-admin";
 import admin from "firebase-admin";
-import { publicProcedure, router, protectedProcedure, adminProcedure, adminPermission } from "./_core/trpc";
+import { publicProcedure, router, protectedProcedure, adminPermission } from "./_core/trpc";
 import { z } from "zod";
 import { TRPCError } from "@trpc/server";
 import { randomBytes } from "node:crypto";
 import { checkCoupon, fetchCoupon, type CouponDoc } from "./coupon-service";
 import { calculateShippingCost, calculateSubtotal, calculateOrderTotal } from "./pricing-service";
-import { ENV } from "./_core/env";
 import { checkRateLimit, clientKey } from "./_core/rateLimit";
 import { syncProductToIndex, removeProductFromIndex, resyncProductsStock } from "./algolia-service";
 import { assertWithinDeliveryZone } from "./delivery-zone-service";
@@ -273,7 +272,7 @@ export const firestoreRouter = router({
       };
     }),
 
-  getCoupons: adminPermission("coupons").query(async ({ ctx }) => {
+  getCoupons: adminPermission("coupons").query(async () => {
     const snapshot = await adminDb.collection("coupons").orderBy("createdAt", "desc").get();
     return snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
   }),
@@ -294,7 +293,7 @@ export const firestoreRouter = router({
       (v) => v.discountType !== "percentage" || v.discountValue <= 100,
       { message: "نسبة الخصم يجب ألا تتجاوز 100%", path: ["discountValue"] },
     ))
-    .mutation(async ({ input, ctx }) => {
+    .mutation(async ({ input }) => {
       const code = input.code.trim().toUpperCase();
       const ref = adminDb.collection("coupons").doc(code);
       if ((await ref.get()).exists) {
@@ -332,7 +331,7 @@ export const firestoreRouter = router({
       (v) => v.discountType !== "percentage" || v.discountValue === undefined || v.discountValue <= 100,
       { message: "نسبة الخصم يجب ألا تتجاوز 100%", path: ["discountValue"] },
     ))
-    .mutation(async ({ input, ctx }) => {
+    .mutation(async ({ input }) => {
       const { code, expiresAt, ...rest } = input;
       const update: Record<string, any> = { ...rest, updatedAt: new Date() };
       if (expiresAt !== undefined) update.expiresAt = expiresAt ? new Date(expiresAt) : null;
@@ -342,7 +341,7 @@ export const firestoreRouter = router({
 
   deleteCoupon: adminPermission("coupons")
     .input(z.object({ code: z.string().min(1) }))
-    .mutation(async ({ input, ctx }) => {
+    .mutation(async ({ input }) => {
       await adminDb.collection("coupons").doc(input.code.trim().toUpperCase()).delete();
       return { success: true };
     }),
@@ -365,7 +364,7 @@ export const firestoreRouter = router({
       logo: z.string(),
       link: z.string().optional(),
     }))
-    .mutation(async ({ input, ctx }) => {
+    .mutation(async ({ input }) => {
       const docRef = await adminDb.collection("brands").add({
         ...input,
         createdAt: new Date(),
@@ -381,7 +380,7 @@ export const firestoreRouter = router({
       logo: z.string().optional(),
       link: z.string().optional(),
     }))
-    .mutation(async ({ input, ctx }) => {
+    .mutation(async ({ input }) => {
       const { id, ...data } = input;
       await adminDb.collection("brands").doc(id).update({
         ...data,
@@ -392,7 +391,7 @@ export const firestoreRouter = router({
 
   deleteBrand: adminPermission("brands")
     .input(z.object({ id: z.string() }))
-    .mutation(async ({ input, ctx }) => {
+    .mutation(async ({ input }) => {
       await adminDb.collection("brands").doc(input.id).delete();
       return { success: true };
     }),
@@ -1082,7 +1081,7 @@ export const firestoreRouter = router({
       textColor: z.string().regex(/^#[0-9A-Fa-f]{6}$/).or(z.literal("")).optional(),
       accentColor: z.string().regex(/^#[0-9A-Fa-f]{6}$/).or(z.literal("")).optional(),
     }))
-    .mutation(async ({ input, ctx }) => {
+    .mutation(async ({ input }) => {
       await adminDb.collection("settings").doc("store").set({
         ...input,
         updatedAt: new Date(),
@@ -1099,7 +1098,7 @@ export const firestoreRouter = router({
     return snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
   }),
 
-  getAllBannersAdmin: adminPermission("banners").query(async ({ ctx }) => {
+  getAllBannersAdmin: adminPermission("banners").query(async () => {
     const snapshot = await adminDb.collection("banners").orderBy("order", "asc").get();
     return snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
   }),
@@ -1117,7 +1116,7 @@ export const firestoreRouter = router({
       order: z.number().default(0),
       isActive: z.boolean().default(true),
     }))
-    .mutation(async ({ input, ctx }) => {
+    .mutation(async ({ input }) => {
       const docRef = await adminDb.collection("banners").add({
         ...input,
         createdAt: new Date(),
@@ -1137,7 +1136,7 @@ export const firestoreRouter = router({
       order: z.number().optional(),
       isActive: z.boolean().optional(),
     }))
-    .mutation(async ({ input, ctx }) => {
+    .mutation(async ({ input }) => {
       const { id, ...data } = input;
       await adminDb.collection("banners").doc(id).update({
         ...data,
@@ -1148,7 +1147,7 @@ export const firestoreRouter = router({
 
   deleteBanner: adminPermission("banners")
     .input(z.object({ id: z.string() }))
-    .mutation(async ({ input, ctx }) => {
+    .mutation(async ({ input }) => {
       await adminDb.collection("banners").doc(input.id).delete();
       return { success: true };
     }),
@@ -1161,7 +1160,7 @@ export const firestoreRouter = router({
       image: z.string().optional(),
       isActive: z.boolean().default(true),
     }))
-    .mutation(async ({ input, ctx }) => {
+    .mutation(async ({ input }) => {
       const docRef = await adminDb.collection("categories").add({
         ...input,
         createdAt: new Date(),
@@ -1178,7 +1177,7 @@ export const firestoreRouter = router({
       image: z.string().optional(),
       isActive: z.boolean().optional(),
     }))
-    .mutation(async ({ input, ctx }) => {
+    .mutation(async ({ input }) => {
       const { id, ...data } = input;
       await adminDb.collection("categories").doc(id).update({
         ...data,
@@ -1189,7 +1188,7 @@ export const firestoreRouter = router({
 
   deleteCategory: adminPermission("categories")
     .input(z.object({ id: z.string() }))
-    .mutation(async ({ input, ctx }) => {
+    .mutation(async ({ input }) => {
       await adminDb.collection("categories").doc(input.id).delete();
       return { success: true };
     }),
@@ -1216,7 +1215,7 @@ export const firestoreRouter = router({
       discountValue: z.number().optional(),
       isActive: z.boolean().default(true),
     }))
-    .mutation(async ({ input, ctx }) => {
+    .mutation(async ({ input }) => {
       const now = new Date();
       const docRef = await adminDb.collection("products").add({
         ...input,
@@ -1249,7 +1248,7 @@ export const firestoreRouter = router({
       discountValue: z.number().optional(),
       isActive: z.boolean().optional(),
     }))
-    .mutation(async ({ input, ctx }) => {
+    .mutation(async ({ input }) => {
       const { id, ...data } = input;
       await adminDb.collection("products").doc(id).update({
         ...data,
@@ -1267,7 +1266,7 @@ export const firestoreRouter = router({
 
   deleteProduct: adminPermission("products")
     .input(z.object({ id: z.string() }))
-    .mutation(async ({ input, ctx }) => {
+    .mutation(async ({ input }) => {
       await adminDb.collection("products").doc(input.id).delete();
       await removeProductFromIndex(input.id);
       return { success: true };
@@ -1282,7 +1281,7 @@ export const firestoreRouter = router({
       cursor: z.string().nullish(),
       limit: z.number().min(1).max(100).default(30),
     }).optional())
-    .query(async ({ ctx, input }) => {
+    .query(async ({ input }) => {
 
       // ملاحظة: الفلترة بالحالة تحتاج فهرساً مركّباً (status ASC + createdAt DESC)
       // على مجموعة "orders" بـ Firestore Console. تأكد أنه Enabled قبل النشر.
@@ -1334,7 +1333,7 @@ export const firestoreRouter = router({
       // للترتيب الرسمي المعتمد لهذه الحالات.
       status: z.enum(['under_review', 'processing', 'out_for_delivery', 'delivered', 'cancelled', 'payment_failed']),
     }))
-    .mutation(async ({ input, ctx }) => {
+    .mutation(async ({ input }) => {
       const { id, ...data } = input;
       const orderRef = adminDb.collection("orders").doc(id);
 
@@ -1347,7 +1346,7 @@ export const firestoreRouter = router({
       // نُرجع كمية كل عنصر لمخزون منتجه ضمن transaction ذرّية، ونضع علامة
       // orderData.stockRestored لمنع أي إرجاع مضاعف لاحقاً (مثال: استدعاء
       // الدالة أكثر من مرة بنفس الحالة، أو إلغاء طلب سبق أن فشل دفعه).
-      const { orderData, orderNumber, userId } = await adminDb.runTransaction(async (tx) => {
+      const { orderData } = await adminDb.runTransaction(async (tx) => {
         const orderDoc = await tx.get(orderRef);
         if (!orderDoc.exists) {
           throw new TRPCError({ code: "NOT_FOUND", message: "الطلب غير موجود" });
@@ -1386,7 +1385,7 @@ export const firestoreRouter = router({
 
   deleteOrder: adminPermission("orders")
     .input(z.object({ id: z.string() }))
-    .mutation(async ({ input, ctx }) => {
+    .mutation(async ({ input }) => {
       // ✅ إصلاح حرج: كان حذف الطلب لا يُرجع المخزون المخصوم وقت إنشائه
       // إطلاقاً — بعكس الإلغاء (updateOrderStatus) الذي يُرجعه بشكل صحيح.
       // فكان حذف أي طلب (خطأ إدخال، طلب مكرر...) يُسبّب نفس فقدان المخزون
@@ -1616,7 +1615,7 @@ export const firestoreRouter = router({
   // "نظرة عامة" كان مخفياً عنه بالسايدبار. الآن محمية بصلاحية "statistics"
   // تحديداً، متسقة مع باقي الأقسام.
   getAdminStats: adminPermission("statistics")
-    .query(async ({ ctx }) => {
+    .query(async () => {
 
       const settingsDocPromise = adminDb.collection("settings").doc("store").get();
       const categoriesCountPromise = adminDb.collection("categories").count().get();
@@ -1681,7 +1680,7 @@ export const firestoreRouter = router({
       try {
         const usersCountSnapshot = await adminDb.collection("users").count().get();
         totalCustomers = usersCountSnapshot.data().count;
-      } catch (e) {
+      } catch {
         try {
           let totalUsers = 0;
           let pageToken: string | undefined;
@@ -1691,7 +1690,7 @@ export const firestoreRouter = router({
             pageToken = listUsersResult.pageToken;
           } while (pageToken);
           totalCustomers = totalUsers;
-        } catch (e2) {
+        } catch {
           totalCustomers = 0;
         }
       }

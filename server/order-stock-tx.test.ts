@@ -10,7 +10,7 @@ function fakeEnv(products: Record<string, { stock: number } | null>) {
   const tx: any = {
     get: async (ref: { id: string }) => {
       const p = products[ref.id];
-      return { exists: p != null, data: () => p ?? undefined };
+      return { exists: p !== undefined && p !== null, data: () => p ?? undefined };
     },
     update: (ref: { id: string }, data: any) => writes.push({ id: ref.id, data }),
   };

@@ -119,6 +119,9 @@ export default tseslint.config(
         "warn",
         { argsIgnorePattern: "^_", varsIgnorePattern: "^_" },
       ],
+      // ✅ نفس مستوى client/server — بدونها كان any بهذا المجلد يظهر Error
+      // (من tseslint.configs.recommended) بينما بباقي المجلدات مجرد Warning.
+      "@typescript-eslint/no-explicit-any": "warn",
     },
   },
 

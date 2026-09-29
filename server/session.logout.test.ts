@@ -1,4 +1,4 @@
-import { describe, expect, it, afterAll } from "vitest";
+import { describe, expect, it } from "vitest";
 import express from "express";
 import { createServer, type Server } from "node:http";
 import { registerSessionRoutes } from "./_core/sessionRoutes";

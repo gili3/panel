@@ -67,6 +67,18 @@ export type OrderStatus =
   | "cancelled"        // ملغي
   | "payment_failed";  // دفع فاشل
 
+// عنوان الشحن — يطابق shippingAddressSchema بـserver/firestore-router.ts
+// (passthrough: قد تحمل حقولاً إضافية مثل name).
+export type ShippingAddress = {
+  fullName: string;
+  phone: string;
+  city: string;
+  address: string;
+  latitude: number;
+  longitude: number;
+  [key: string]: unknown;
+};
+
 export type Order = {
   id: string;
   userId: string;
@@ -82,7 +94,7 @@ export type Order = {
   status: OrderStatus;
   paymentMethod?: string;
   paymentReceipt?: string;
-  shippingAddress: any;
+  shippingAddress: ShippingAddress;
   // ✅ علامة داخلية تمنع إرجاع المخزون مرتين لنفس الطلب (إلغاء ثم حذف،
   // أو استدعاء مزدوج) — راجع updateOrderStatus وdeleteOrder بالسيرفر.
   stockRestored?: boolean;

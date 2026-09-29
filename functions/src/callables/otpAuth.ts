@@ -70,6 +70,12 @@ export const sendEmailVerificationOtp = functionsV1.https.onCall(async (data, co
     if (!requestedEmail) {
       throw new functionsV1.https.HttpsError("invalid-argument", "البريد الإلكتروني مطلوب");
     }
+    // ✅ إصلاح: حد المعدّل هنا يُطبَّق على البريد المُدخَل *قبل* البحث عن الحساب وبرد
+    // ثابت (كما في sendPasswordResetOtp) — لأن رمي resource-exhausted بعد البحث كان
+    // يكشف أن الحساب موجود (حساب فعلي يُحظَر بعد 5 طلبات، وغير الموجود يبقى يردّ sent:true).
+    if (!(await checkRateLimitFirestore(`send-verify-otp-anon:${requestedEmail}`, 5, 15 * 60 * 1000))) {
+      return { sent: true };
+    }
     try {
       const user = await admin.auth().getUserByEmail(requestedEmail);
       if (user.emailVerified) {
@@ -89,6 +95,8 @@ export const sendEmailVerificationOtp = functionsV1.https.onCall(async (data, co
 
   // ✅ حماية من إغراق البريد بالرسائل (email bombing) — راجع lib/rateLimit.ts
   if (!(await checkRateLimitFirestore(`send-verify-otp:${uid}`, 5, 15 * 60 * 1000))) {
+    // بلا جلسة: نفس الرد الثابت (لا نكشف وجود الحساب) — الخطأ الصريح للمسجَّل دخوله فقط.
+    if (!context.auth) return { sent: true };
     throw new functionsV1.https.HttpsError(
       "resource-exhausted",
       "طلبات كثيرة جداً، يرجى المحاولة لاحقاً"

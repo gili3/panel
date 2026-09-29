@@ -109,6 +109,11 @@ export const notifyNewSignIn = functionsV1.https.onCall(async (data, context) =>
   const method = typeof data?.method === "string" && data.method.trim() ? data.method.trim() : "غير معروف";
 
   try {
+    // ✅ لا حد سابقاً: أي عميل مسجَّل يستطيع استدعاءها بحلقة فيُغرق بريده (ويستهلك حصة
+    // Resend). الحد سخيّ بما يكفي لأي استخدام حقيقي (تسجيلات دخول متتالية).
+    if (!(await checkRateLimitFirestore(`sign-in-alert:${uid}`, 10, 15 * 60 * 1000))) {
+      return { sent: false };
+    }
     const user = await admin.auth().getUser(uid);
     if (!user.email) return { sent: false };
 

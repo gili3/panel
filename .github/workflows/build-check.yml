@@ -14,7 +14,7 @@ on:
       - "server/**"
       - "shared/**"
       - "tests/**"
-      - "functions/src/lib/**"
+      - "functions/**"
       - "package.json"
       - "pnpm-lock.yaml"
       - "vite.config.ts"
@@ -58,6 +58,16 @@ jobs:
       # إهدار وقت في بناء تجريبي لن يُستخدم أصلاً).
       - name: تشغيل الاختبارات التلقائية (vitest)
         run: pnpm test
+
+      # ✅ إضافة: حزمة functions/ لها tsconfig مستقل (strict + noUnusedLocals) ولا يشملها
+      # `pnpm run check` (tsconfig الجذر يستثنيها)، وبناؤها كان يحدث فقط داخل
+      # deploy-functions.yml *بعد* الدمج بـmain — أي خطأ نوع هناك كان يُكتشف وقت
+      # النشر نفسه. الآن يُفحص هنا قبل ذلك.
+      - name: بناء functions (tsc)
+        working-directory: functions
+        run: |
+          npm install --no-audit --no-fund
+          npm run build
 
       - name: بناء تجريبي (يتأكد إن البناء ما ينكسر)
         run: pnpm run build

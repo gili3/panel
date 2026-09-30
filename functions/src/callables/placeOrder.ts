@@ -118,8 +118,12 @@ function storageBucket(): string | undefined {
   }
 }
 
+// نسخة دافئة دائمة لتفادي تأخر أول طلب بعد خمول (البدء البارد). تكلفتها مستمرة، لذا الافتراضي 0؛
+// فعّلها بوضع PLACE_ORDER_MIN_INSTANCES=1 في functions/.env (سر FUNCTIONS_ENV) قبل الإطلاق الفعلي.
+const minInstances = Number(process.env.PLACE_ORDER_MIN_INSTANCES || 0);
+
 export const placeOrder = functionsV1
-  .runWith({ enforceAppCheck })
+  .runWith({ enforceAppCheck, ...(minInstances > 0 ? { minInstances } : {}) })
   .https.onCall(async (data, context) => {
     if (!context.auth) throw fail("unauthenticated", "يجب تسجيل الدخول لإتمام الطلب");
     const uid = context.auth.uid;

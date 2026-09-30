@@ -37,6 +37,11 @@ const DEDUP_WINDOW_MS = 5 * 60 * 1000; // 5 دقائق — نفس الخطأ ا�
 // ✅ نمط مطابق لـrateLimit.ts (خريطة بالذاكرة، تنظيف دوري) — يمنع حلقة خطأ
 // متكررة (مثال: فشل onSnapshot يعيد المحاولة كل ثانية) من إنشاء آلاف
 // المستندات المتطابقة بدقائق قليلة.
+// ✅ الاحتفاظ بالسجل 90 يوماً من آخر ظهور ثم يحذفه Firestore تلقائياً (سياسة TTL على الحقل
+// expireAt — راجع fieldOverrides بـfirestore.indexes.json). كانت السجلات تتراكم بلا نهاية.
+const RETENTION_MS = 90 * 24 * 60 * 60 * 1000;
+const expireAtFrom = (nowMs: number) => admin.firestore.Timestamp.fromMillis(nowMs + RETENTION_MS);
+
 const recentHashes = new Map<string, { docId: string; count: number; lastAt: number }>();
 
 setInterval(() => {
@@ -67,7 +72,7 @@ export async function logSystemError(db: Firestore, input: ReportErrorInput): Pr
       existing.count += 1;
       existing.lastAt = now;
       await db.collection("systemErrorLogs").doc(existing.docId).set(
-        { count: existing.count, lastSeenAt: admin.firestore.Timestamp.now() },
+        { count: existing.count, lastSeenAt: admin.firestore.Timestamp.now(), expireAt: expireAtFrom(now) },
         { merge: true }
       );
       return;
@@ -89,6 +94,7 @@ export async function logSystemError(db: Firestore, input: ReportErrorInput): Pr
       resolved: false,
       createdAt: admin.firestore.Timestamp.now(),
       lastSeenAt: admin.firestore.Timestamp.now(),
+      expireAt: expireAtFrom(now),
     });
   } catch (loggingError) {
     console.error("[error-log-service] فشل تسجيل الخطأ:", loggingError);

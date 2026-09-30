@@ -114,6 +114,7 @@
   ],
   "fieldOverrides": [
     { "collectionGroup": "_rateLimits", "fieldPath": "expireAt", "ttl": true, "indexes": [] },
+    { "collectionGroup": "systemErrorLogs", "fieldPath": "expireAt", "ttl": true, "indexes": [] },
     { "collectionGroup": "passwordResetOtps", "fieldPath": "expiresAt", "ttl": true, "indexes": [] },
     { "collectionGroup": "adminAlerts", "fieldPath": "alertId", "indexes": [
       { "order": "ASCENDING", "queryScope": "COLLECTION_GROUP" },

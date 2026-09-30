@@ -6,6 +6,7 @@ import net from "net";
 import { createExpressMiddleware } from "@trpc/server/adapters/express";
 import { registerSessionRoutes } from "./sessionRoutes";
 import { originGuard } from "./originGuard";
+import { securityHeaders } from "./securityHeaders";
 import { appRouter } from "../routers";
 import { createContext } from "./context";
 import { serveStatic, setupVite } from "./vite";
@@ -96,6 +97,9 @@ async function startServer() {
   // وعلى تحديد هوية العميل لمحدود الطلبات (rateLimit.ts) أدناه.
   app.set("trust proxy", 1);
 
+  // ✅ ترويسات الأمان (nosniff، منع التضمين بـiframe، HSTS بالإنتاج...) — راجع securityHeaders.ts
+  app.use(securityHeaders({ production: process.env.NODE_ENV === "production" }));
+
   // CORS - يسمح لتطبيق Capacitor والموقع بالاتصال فقط من النطاقات المعروفة
   // ⚠️ تمت إزالة '*' التي كانت موجودة سابقاً: مع credentials: true هذا التركيب
   // إما لا يعمل فعلياً (سلوك مكتبة cors الحالي) أو يفتح الوصول للجميع إذا تغيّر
@@ -124,7 +128,7 @@ async function startServer() {
   // وإيصالات الدفع تُرفع مباشرة من العميل لـFirebase Storage عبر Client SDK
   // (راجع client/src/lib/imageUpload.ts) ولا تمر عبر هذا السيرفر إطلاقاً —
   // فلا حاجة فعلية لأي جسم طلب كبير هنا. 1MB هامش آمن أكبر من أي payload JSON
-  // شرعي متوقع بالتطبيق (طلب بحد أقصى 10 عناصر، إعدادات المتجر، إلخ).
+  // شرعي متوقع بالتطبيق (طلب بحد أقصى 30 سطراً، إعدادات المتجر، إلخ).
   // ✅ (Audit) رفض طلبات الكتابة القادمة من Origin غير موثوق (طبقة CSRF إضافية) — راجع originGuard.ts
   app.use(["/api/trpc", "/api/session"], originGuard(allowedOrigins));
   app.use(express.json({ limit: "1mb" }));

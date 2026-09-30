@@ -18,3 +18,5 @@ export {
   confirmPasswordResetOtp,
 } from "./callables/otpAuth";
 export { reportClientError } from "./callables/errorReporting";
+export { placeOrder } from "./callables/placeOrder";
+export { submitContactMessage } from "./callables/contactMessage";

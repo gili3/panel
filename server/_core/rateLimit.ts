@@ -44,7 +44,11 @@ export function pickClientIp(
 
 function clientKey(req: Request): string {
   const hops = Number.parseInt(process.env.RATE_LIMIT_PROXY_HOPS ?? "", 10);
-  return pickClientIp(req.headers["x-forwarded-for"], req.socket.remoteAddress, Number.isFinite(hops) ? hops : 0);
+  // ✅ إصلاح: بلا RATE_LIMIT_PROXY_HOPS كان يُؤخذ *أول* عنوان بـX-Forwarded-For وهو قابل للتزوير من
+  // العميل (يبدّل الهيدر فيتجاوز الحد). السيرفر يعمل خلف بروكسي واحد (app.set("trust proxy", 1)
+  // بـindex.ts)، فالافتراضي بالإنتاج hop واحد = العنوان الذي أضافه البروكسي الموثوق نفسه.
+  const defaultHops = process.env.NODE_ENV === "production" ? 1 : 0;
+  return pickClientIp(req.headers["x-forwarded-for"], req.socket.remoteAddress, Number.isFinite(hops) ? hops : defaultHops);
 }
 
 /**

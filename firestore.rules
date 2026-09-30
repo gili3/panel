@@ -12,6 +12,10 @@ rules_version = '2';
 //  • بدون نشر هذا الملف فعلياً (firebase deploy --only firestore:rules)
 //    فإن أي شخص يملك مفاتيح Firebase العامة (موجودة أصلاً بكود التطبيق/الموقع،
 //    وهذا طبيعي وليس تسريباً) يقدر يقرأ/يكتب أي شيء في القاعدة مباشرة.
+//  • ✅ تحديث: الطلبات والمخزون وعدّاد الطلبات واستخدام الكوبونات ورسائل التواصل لم تعد
+//    تُكتب من العميل إطلاقاً — تمر عبر Cloud Functions `placeOrder` و`submitContactMessage`
+//    (Admin SDK) فقط، والقواعد ترفض أي كتابة مباشرة عليها. لا تنشر هذه القواعد قبل نشر الدوال
+//    وإصدار نسخة الأندرويد الجديدة (النسخ القديمة تكتب مباشرة وستفشل) — راجع FIXES-AR.md.
 // ═══════════════════════════════════════════════════════════════════════════
 
 service cloud.firestore {
@@ -22,15 +26,6 @@ service cloud.firestore {
     // ─────────────────────────────────────────────────────────────────────
     function isSignedIn() {
       return request.auth != null;
-    }
-
-    // ✅ (Audit) مسارات الشراء (إنشاء طلب، إنقاص مخزون، عدّاد الطلبات، استخدام كوبون) تشترط
-    // بريداً مؤكَّداً. التطبيق نفسه يمنع الدخول بحساب غير مؤكَّد (loginWithEmail)، لكن القواعد
-    // كانت تكتفي بـisSignedIn() فيستطيع أي حساب غير مؤكَّد (يُنشأ مباشرة عبر Firebase Auth
-    // بلا المرور بالتطبيق) تنفيذ هذه الكتابات. الحقل يُقرأ من التوكن؛ الحسابات عبر جوجل مؤكَّدة
-    // تلقائياً، وحسابات البريد تدخل دائماً بعد التأكيد بتسجيل دخول جديد (توكن جديد).
-    function isVerifiedUser() {
-      return isSignedIn() && request.auth.token.email_verified == true;
     }
 
     function isOwner(userId) {
@@ -90,139 +85,9 @@ service cloud.firestore {
         );
     }
 
-    // ─────────────────────────────────────────────────────────────────────
-    //  ✅ إصلاح (Audit C-1): تحقق من سعر كل عنصر مقابل مستند المنتج الحيّ.
-    //  Firestore Rules لا تدعم loops، لذا نتحقق بفهرس صريح حتى حد أقصى ثابت
-    //  لعدد العناصر (10) — orders/create يفرض items.size() <= 10 أدناه.
-    //  أي عنصر خارج هذا النطاق (index >= items.size()) يُعتبر صحيحاً تلقائياً
-    //  (لا وجود له أصلاً)، بحيث تدعم الدالة أي عدد عناصر من 1 إلى 10.
-    // ─────────────────────────────────────────────────────────────────────
-    function validItemAt(items, i) {
-      return items.size() <= i ||
-        (
-          // ✅ (Audit) عدد صحيح فقط: كمية كسرية (0.001) كانت تمرّ فيُشترى منتج غالٍ بسعر رمزي
-          // ويظهر للأدمن طلب بكمية غير منطقية (السعر يُحسب سعر×كمية بالمنطق نفسه فيتسق ظاهرياً).
-          items[i].quantity is int && items[i].quantity > 0 &&
-          items[i].price ==
-            get(/databases/$(database)/documents/products/$(items[i].productId)).data.price
-        );
-    }
-
-    function allItemsValid(items) {
-      return items.size() <= 10 &&
-        validItemAt(items, 0) && validItemAt(items, 1) && validItemAt(items, 2) &&
-        validItemAt(items, 3) && validItemAt(items, 4) && validItemAt(items, 5) &&
-        validItemAt(items, 6) && validItemAt(items, 7) && validItemAt(items, 8) &&
-        validItemAt(items, 9);
-    }
-
-    // مجموع سعر*كمية كل عنصر — بديل عن reduce/loop غير المدعومين في القواعد
-    function lineTotal(items, i) {
-      return items.size() <= i ? 0 : items[i].price * items[i].quantity;
-    }
-
-    function computedSubtotal(items) {
-      return lineTotal(items, 0) + lineTotal(items, 1) + lineTotal(items, 2) +
-        lineTotal(items, 3) + lineTotal(items, 4) + lineTotal(items, 5) +
-        lineTotal(items, 6) + lineTotal(items, 7) + lineTotal(items, 8) +
-        lineTotal(items, 9);
-    }
-
-    // ─────────────────────────────────────────────────────────────────────
-    //  ✅ إصلاح (Audit H-2 + M-4): التحقق من أن الخصم مرتبط فعلياً بكوبون
-    //  صالح، وأن تحديث usageCount للكوبون يحدث ضمن *نفس* المعاملة التي
-    //  تُنشئ هذا الطلب بالذات (عبر getAfter على مستند الكوبون)، بدل السماح
-    //  بزيادة usageCount من أي كتابة منفصلة بلا طلب فعلي مرتبط بها.
-    //  كما نتحقق أن المستخدم لم يستخدم هذا الكوبون من قبل (حد استخدام واحد
-    //  لكل مستخدم) عبر مستند فرعي coupons/{code}/usedBy/{uid} يُنشأ ضمن
-    //  نفس المعاملة، ولا يجوز أن يكون موجوداً مسبقاً.
-    // ─────────────────────────────────────────────────────────────────────
-    function noCouponUsed(data) {
-      return !("couponCode" in data) || data.couponCode == null;
-    }
-
-    function couponDiscountValid(data) {
-      let code = data.couponCode;
-      let coupon = get(/databases/$(database)/documents/coupons/$(code)).data;
-      let afterCoupon = getAfter(/databases/$(database)/documents/coupons/$(code)).data;
-      let subtotal = data.subtotal;
-      let expectedDiscount =
-        coupon.discountType == 'percentage'
-          ? subtotal * (coupon.discountValue / 100.0)
-          : (coupon.discountValue < subtotal ? coupon.discountValue : subtotal);
-      return
-        coupon.isActive == true &&
-        (!("expiresAt" in coupon) || coupon.expiresAt == null || coupon.expiresAt > request.time) &&
-        subtotal >= coupon.minOrderAmount &&
-        (coupon.usageLimit <= 0 || coupon.usageCount < coupon.usageLimit) &&
-        // نفس المعاملة يجب أن تزيد usageCount بالضبط 1 على هذا الكوبون تحديداً
-        afterCoupon.usageCount == coupon.usageCount + 1 &&
-        // نفس المعاملة يجب أن تُنشئ سجل "استُخدم من طرف هذا المستخدم" ولم يكن موجوداً من قبل
-        !exists(/databases/$(database)/documents/coupons/$(code)/usedBy/$(request.auth.uid)) &&
-        getAfter(/databases/$(database)/documents/coupons/$(code)/usedBy/$(request.auth.uid)) != null &&
-        // الخصم المُرسَل يطابق الخصم المحسوب فعلياً من الكوبون (هامش صغير جداً لأخطاء التقريب)
-        (data.discount > expectedDiscount - 0.01 && data.discount < expectedDiscount + 0.01);
-    }
-
-    function discountValid(data) {
-      return noCouponUsed(data)
-        ? data.discount == 0
-        : couponDiscountValid(data);
-    }
-
-    // ─────────────────────────────────────────────────────────────────────
-    //  ✅ إصلاح (ثغرة مالية): shippingCost لم يكن يُتحقق منه هنا سابقاً إطلاقاً
-    //  مقابل settings/store — فقط "رقم غير سالب" متّسق حسابياً مع total. أي
-    //  عميل (APK مُعاد بناؤه، أو كتابة مباشرة لـFirestore بحساب مصادَق عليه)
-    //  كان يستطيع إرسال shippingCost: 0 مع كل طلب بصرف النظر عن إعدادات
-    //  الشحن الفعلية، بخسارة مالية فعلية متكرّرة. الآن نشتق قيمة الشحن
-    //  المتوقَّعة من settings/store (نفس منطق shippingBase/freeShippingThreshold
-    //  المستخدم بالسيرفر ضمن runOrderPricingTransaction) ونقارنها بالقيمة
-    //  المُرسَلة، بنفس أسلوب التحقق من الكوبون أعلاه.
-    // ─────────────────────────────────────────────────────────────────────
-    function shippingCostValid(data) {
-      let settings = get(/databases/$(database)/documents/settings/store).data;
-      let base = ("shippingCost" in settings) ? settings.shippingCost : 30;
-      let threshold = ("freeShippingThreshold" in settings) ? settings.freeShippingThreshold : 0;
-      let expected = (threshold > 0 && data.subtotal >= threshold) ? 0 : base;
-      return data.shippingCost == expected;
-    }
-
-    // ─────────────────────────────────────────────────────────────────────
-    //  ✅ جديد: مناطق التوصيل — التحقق الدقيق (نقطة داخل مضلّع) يحدث فقط على
-    //  السيرفر (delivery-zone-service.ts::assertWithinDeliveryZone، عبر
-    //  Admin SDK الذي يتجاوز هذه القواعد أصلاً). لكن تطبيق الأندرويد يكتب
-    //  مستند الطلب مباشرة عبر Client SDK (placeOrder)، فهذه القواعد هي خط
-    //  الدفاع الحقيقي الوحيد لذلك المسار. تعبير مضلّع حقيقي غير مدعوم بلغة
-    //  Firestore Rules (لا loops)، لذا نستخدم مستطيل إحداثيات تقريبي (bounding
-    //  box) محفوظاً مسبقاً بنفس مستند settings/deliveryZones (يُحدَّثه السيرفر
-    //  عند كل حفظ لمناطق التوصيل من لوحة التحكم) كخط دفاع تقريبي ثانٍ: أي
-    //  نقطة خارج هذا المستطيل مرفوضة قطعاً، وأي نقطة داخله قد تحتاج لاحقاً
-    //  تدقيقاً يدوياً من الأدمن (نادر جداً عملياً لأن معظم المضلّعات القريبة
-    //  من مستطيلها الحاوي). إن لم تُضبط مناطق توصيل بعد (bbox غير موجود)،
-    //  لا قيد جغرافي هنا إطلاقاً (الميزة معطّلة).
-    // ─────────────────────────────────────────────────────────────────────
-    function deliveryZoneBboxValid(data) {
-      return
-        !exists(/databases/$(database)/documents/settings/deliveryZones) ||
-        deliveryZoneBboxValidInner(data, get(/databases/$(database)/documents/settings/deliveryZones).data);
-    }
-
-    function deliveryZoneBboxValidInner(data, settingsData) {
-      let bbox = settingsData.bbox;
-      return
-        !("bbox" in settingsData) || bbox == null ||
-        (
-          "shippingAddress" in data &&
-          data.shippingAddress.latitude is number && data.shippingAddress.longitude is number &&
-          // 0/0 يعني "لا يوجد موقع محدَّد" على مستوى التطبيق — تُرفض بشرط
-          // الحقول الأخرى (fullName/city/address) لتبقى القاعدة صريحة بدل
-          // السماح الصامت بغياب الموقع.
-          !(data.shippingAddress.latitude == 0 && data.shippingAddress.longitude == 0) &&
-          data.shippingAddress.latitude  >= bbox.minLat && data.shippingAddress.latitude  <= bbox.maxLat &&
-          data.shippingAddress.longitude >= bbox.minLng && data.shippingAddress.longitude <= bbox.maxLng
-        );
-    }
+    // ملاحظة: كانت هنا دوال تحقق مسار إنشاء الطلب المباشر (السعر، الشحن، الكوبون، مضلّع
+    // التوصيل). أُزيلت لأن إنشاء الطلب صار حصراً عبر Cloud Function `placeOrder`
+    // (functions/src/callables/placeOrder.ts، Admin SDK) — القواعد ترفض أي كتابة مباشرة عليه.
 
     // ═══════════════════════════════════════════════════════════════════
     //  users/{userId} — الملف الشخصي
@@ -347,37 +212,11 @@ service cloud.firestore {
       }
     }
 
-    // ═══════════════════════════════════════════════════════════════════
-    //  products/{productId} — قراءة عامة، والكتابة عبر لوحة التحكم فقط
-    // ═══════════════════════════════════════════════════════════════════
+    // ✅ المخزون يُعدَّل حصراً من السيرفر (Admin SDK) داخل transaction الطلب — كان أي حساب موثَّق
+    // يستطيع إنقاص المخزون بلا طلب حقيقي (استنزاف مخزون). القراءة عامة (كتالوج).
     match /products/{productId} {
-      allow read: if true; // كتالوج عام، لا بيانات حساسة
-
-      // ✅ الاستثناء الوحيد: إنقاص المخزون أثناء إتمام الطلب من تطبيق الأندرويد
-      // (placeOrder يكتب مباشرة لـFirestore بدون سيرفر وسيط). يُسمح فقط بتعديل
-      // "stock" (ولا يمكن أن يزيد!) و"updatedAt" — أي شيء آخر (السعر، الاسم، isActive...) ممنوع تماماً.
-      // ✅ تخفيف جزئي (Audit L-1): لا يوجد ربط مباشر بين هذه الكتابة وبين
-      // إنشاء طلب حقيقي فعلياً (معرّف الطلب عشوائي، ولا يمكن التحقق منه هنا
-      // عبر getAfter كما صار مع الكوبونات). هذا يعني نظرياً أن أي مستخدم
-      // مسجّل دخول يملك توكن صالح (حتى خارج التطبيق تماماً، عبر سكربت مباشر)
-      // يقدر ينقص مخزون أي منتج بدون شراء فعلي — تخريب/DoS على المخزون، وليس
-      // تسريب بيانات. لا يوجد حل كامل عبر Firestore Rules وحدها لهذا النمط
-      // (يتطلب Firebase App Check لضمان أن الطلب صادر فعلاً من تطبيق حقيقي
-      // — راجع ملاحظة الخطة). كتخفيف جزئي فقط بانتظار ذلك: نحدّ من مقدار
-      // النقص المسموح بكل كتابة واحدة.
-      // ✅ تشديد إضافي (Audit المرحلة 3، بند 3.7): خُفِّض الحد من 100 إلى 10
-      // وحدات لكل كتابة — يطابق حد items.size() <= 10 المفروض أصلاً على كل
-      // طلب واحد بقاعدة orders/create أعلاه (أي طلب شرعي واحد لا ينقص أكثر
-      // من هذا القدر من منتج واحد أساساً)، فيبطئ أي إساءة استخدام آلية أكثر
-      // دون التأثير على أي استخدام حقيقي.
-      allow update: if isVerifiedUser() &&
-        onlyChangedKeys(['stock', 'updatedAt']) &&
-        request.resource.data.stock is number &&
-        request.resource.data.stock >= 0 &&
-        request.resource.data.stock <= resource.data.stock &&
-        resource.data.stock - request.resource.data.stock <= 10;
-
-      allow create, delete: if false; // فقط عبر لوحة التحكم (Admin SDK)
+      allow read: if true;
+      allow write: if false;
     }
 
     // ═══════════════════════════════════════════════════════════════════
@@ -404,153 +243,39 @@ service cloud.firestore {
       allow write: if false; // عبر لوحة التحكم فقط
     }
 
-    // ═══════════════════════════════════════════════════════════════════
-    //  counters/orders — عدّاد أرقام الطلبات التسلسلي
-    // ═══════════════════════════════════════════════════════════════════
+    // ✅ عدّاد رقم الطلب داخلي بالكامل (Admin SDK فقط) — لا قراءة ولا كتابة من العميل.
     match /counters/{counterId} {
-      allow read: if isSignedIn();
-      // ✅ يُسمح فقط بزيادة الحقل current بمقدار 1 بالضبط — يمنع أي تلاعب
-      // برقم الطلب (تخطي أرقام، إعادة استخدام رقم، إلخ)
-      allow update: if isVerifiedUser() &&
-        onlyChangedKeys(['current']) &&
-        request.resource.data.current == resource.data.current + 1;
-      // ✅ إصلاح (Audit L-2): "create" كانت مسموحة لأي مستخدم مسجّل دخول
-      // بدون أي تحقق من القيمة الابتدائية — لو تصادف أن هذا أول طلب يصير
-      // بالمتجر إطلاقاً (نافذة زمنية ضيقة، لكنها موجودة)، كان يمكن لأي
-      // مستخدم يكتب current بأي رقم عشوائي (سالب، أو ضخم جداً)، فيُفسد بداية
-      // تسلسل أرقام الطلبات نهائياً. الآن يُفرض أن أول قيمة ابتدائية دائماً
-      // نفس نقطة البداية الرسمية المستخدمة بكود التطبيق (11001000) أو أول
-      // زيادة طبيعية عليها (11001001) — نفس القيمتين الوحيدتين اللتين قد
-      // يكتبهما الكود الشرعي فعلياً عند أول طلب.
-      allow create: if isVerifiedUser() &&
-        request.resource.data.keys().hasOnly(['current']) &&
-        request.resource.data.current is number &&
-        (request.resource.data.current == 11001000 || request.resource.data.current == 11001001);
-      allow delete: if false;
+      allow read, write: if false;
     }
 
-    // ═══════════════════════════════════════════════════════════════════
-    //  coupons/{code} — كوبونات الخصم (تُدار من لوحة التحكم)
-    // ═══════════════════════════════════════════════════════════════════
+    // معاينة الكوبون بالتطبيق تقرأ المستند بمعرّفه (get فقط، بلا list = لا تعداد للأكواد).
+    // ✅ الاستخدام (usageCount + usedBy) يُسجَّل حصراً داخل transaction الطلب بالسيرفر — كان
+    // بالإمكان حرق كوبون بحسابات موثَّقة متعددة بلا أي طلب.
     match /coupons/{code} {
-      // القراءة لأي مستخدم مسجّل دخول فقط (يلزم تسجيل الدخول أصلاً للوصول للسلة/الدفع)
-      // ✅ (Audit) get فقط، وlist ممنوع: السابق `allow read` كان يسمح لأي حساب بجلب
-      // *كل* الكوبونات (الأكواد وقيمها وحدودها) بطلب قائمة واحد فيستخدم أكواد لم تُوجَّه
-      // له. التطبيق يقرأ كوبوناً واحداً بمعرّفه (coupons/{CODE}) — لا يحتاج list إطلاقاً.
       allow get: if isSignedIn();
       allow list: if false;
+      allow write: if false;
 
-      // ✅ إصلاح (Audit H-2): سابقاً كان يمكن زيادة usageCount بكتابة منفصلة
-      // بلا أي طلب فعلي مرتبط بها (استنزاف الكوبون / DoS على العروض). الآن
-      // نفرض أن هذه الزيادة يجب أن تحدث **ضمن نفس المعاملة** التي تُنشئ طلباً
-      // فعلياً لهذا المستخدم بهذا الكوبون تحديداً — يتحقق منه فعلياً عبر
-      // discountValid()/couponDiscountValid() في قاعدة orders/create أعلاه
-      // (كلا الشرطين يجب أن يتحققا معاً بما أنهما كتابتان بنفس المعاملة).
-      allow update: if isVerifiedUser() &&
-        onlyChangedKeys(['usageCount', 'updatedAt']) &&
-        resource.data.isActive == true &&
-        request.resource.data.usageCount == resource.data.usageCount + 1 &&
-        !exists(/databases/$(database)/documents/coupons/$(code)/usedBy/$(request.auth.uid)) &&
-        // ✅ (Audit) التعليق أعلاه يَعِد بأن الزيادة تحدث "ضمن نفس المعاملة" لكن الشرط لم يكن
-        // يفرضه: أي حساب كان يكرّر usageCount+1 بلا حدود ما دام لم ينشئ سجل usedBy، فيستنزف
-        // usageLimit لأي كوبون (DoS على العروض). الآن يجب أن يُنشأ سجل usedBy لهذا المستخدم
-        // بنفس الكتابة/المعاملة — فيُحسب على الأكثر استخدام واحد لكل حساب لكل كوبون.
-        existsAfter(/databases/$(database)/documents/coupons/$(code)/usedBy/$(request.auth.uid));
-
-      allow create, delete: if false; // فقط عبر لوحة التحكم (Admin SDK)
-
-      // ── coupons/{code}/usedBy/{uid} ──────────────────────────────────
-      // ✅ إصلاح (Audit M-4): سجل "استخدم هذا المستخدم هذا الكوبون من قبل" —
-      // يمنع إعادة استخدام نفس الكوبون أكثر من مرة لكل مستخدم، بمعزل عن
-      // usageLimit العام. يُنشأ مرة واحدة فقط لكل (مستخدم، كوبون)، ولا يُعدَّل
-      // ولا يُحذف أبداً من العميل.
       match /usedBy/{userId} {
         allow read: if isOwner(userId);
-        allow create: if isOwner(userId) && !exists(
-          /databases/$(database)/documents/coupons/$(code)/usedBy/$(userId)
-        );
-        allow update, delete: if false;
+        allow write: if false;
       }
     }
 
-    // ═══════════════════════════════════════════════════════════════════
-    //  orders/{orderId} — الطلبات
-    // ═══════════════════════════════════════════════════════════════════
-    // ═══════════════════════════════════════════════════════════════════
-    //  contactMessages/{id} — رسائل شاشة "اتصل بنا" بالتطبيق
-    //  ✅ جديد: كانت هذه الشاشة تعرض نجاحاً وهمياً بلا أي كتابة فعلية —
-    //  الآن تُكتب رسائل حقيقية هنا. إنشاء فقط (حتى بدون تسجيل دخول، مطابقةً
-    //  لسلوك الشاشة نفسها)، بحد أقصى لطول كل حقل لمنع إساءة الاستخدام.
-    //  القراءة/الحذف عبر لوحة التحكم فقط (Admin SDK).
-    // ═══════════════════════════════════════════════════════════════════
+    // ✅ الإرسال عبر Cloud Function `submitContactMessage` (حد لكل IP وكل مرسِل قبل الكتابة).
+    // كانت القاعدة السابقة تسمح بالإنشاء لأي شخص بلا تسجيل دخول ولا حد معدل (سبام + إغراق
+    // تنبيهات الأدمن). القراءة/الإدارة عبر لوحة التحكم (Admin SDK) فقط.
     match /contactMessages/{id} {
-      allow read, update, delete: if false;
-      allow create: if
-        request.resource.data.keys().hasOnly(
-          ["name", "email", "subject", "message", "userId", "status", "createdAt"]
-        ) &&
-        request.resource.data.name is string &&
-        request.resource.data.name.size() > 0 && request.resource.data.name.size() <= 100 &&
-        request.resource.data.email is string &&
-        request.resource.data.email.size() > 0 && request.resource.data.email.size() <= 200 &&
-        request.resource.data.message is string &&
-        request.resource.data.message.size() > 0 && request.resource.data.message.size() <= 3000 &&
-        request.resource.data.status == "new" &&
-        (request.resource.data.userId == null || request.resource.data.userId == request.auth.uid);
+      allow read, write: if false;
     }
 
     match /orders/{orderId} {
-      // القراءة: صاحب الطلب أو الأدمن فقط
       allow read: if isSignedIn() &&
         (resource.data.userId == request.auth.uid || isAdmin());
 
-      // ✅ الإنشاء: يخص طلبات تطبيق الأندرويد (placeOrder يكتب مباشرة لـFirestore).
-      // تحقق أساسي إجباري:
-      //   • الطلب يخص صاحبه (userId == uid المُصادَق عليه)، ولا يمكن انتحال هوية غيره
-      //   • الحالة الابتدائية "under_review" فقط (لا يمكن إنشاء طلب "مُسلَّم" مثلاً)
-      //     ✅ إعادة تنظيم: كانت القيمة "pending" (نظام status/paymentStatus
-      //     منفصلين قديم) — الآن "under_review" ضمن حقل status الموحّد الجديد
-      //     (راجع shared/types.ts::OrderStatus).
-      //   • الحسابات المالية متّسقة داخلياً: total = subtotal - discount + shippingCost
-      //   • القيم المالية غير سالبة
-      //   • (Audit C-1) سعر كل عنصر ومجموعه الفرعي يُتحقق منهما فعلياً مقابل مستند
-      //     المنتج الحي عبر allItemsValid()/computedSubtotal() — لم يعد هذا يعتمد فقط
-      //     على كود التطبيق (placeOrder داخل transaction)؛ القاعدة نفسها الآن خط دفاع
-      //     حقيقي ومستقل حتى ضد كتابة مباشرة لقاعدة البيانات خارج التطبيق تماماً.
-      //   • (Audit H-2/M-4) الخصم مرتبط وجوباً بكوبون صالح تُحدَّث حالته usageCount
-      //     ويُسجَّل استخدامه لهذا المستخدم ضمن نفس المعاملة، عبر discountValid().
-      allow create: if isVerifiedUser() &&
-        request.resource.data.userId == request.auth.uid &&
-        request.resource.data.status.lower() == 'under_review' &&
-        request.resource.data.items is list &&
-        request.resource.data.items.size() > 0 &&
-        request.resource.data.subtotal is number && request.resource.data.subtotal >= 0 &&
-        request.resource.data.discount is number && request.resource.data.discount >= 0 &&
-        request.resource.data.shippingCost is number && request.resource.data.shippingCost >= 0 &&
-        request.resource.data.total is number && request.resource.data.total >= 0 &&
-        request.resource.data.total ==
-          request.resource.data.subtotal - request.resource.data.discount + request.resource.data.shippingCost &&
-        // ✅ إصلاح (ثغرة مالية): shippingCost يجب أن يطابق القيمة المشتقة فعلياً
-        // من settings/store (سعر الشحن الأساسي أو صفر إن تجاوز subtotal حد
-        // الشحن المجاني) — وليس أي رقم غير سالب يختاره العميل، راجع shippingCostValid().
-        shippingCostValid(request.resource.data) &&
-        // ✅ إصلاح (Audit C-1): كل سعر عنصر يجب أن يطابق سعر المنتج الحقيقي وقت الطلب،
-        // والمجموع الفرعي يجب أن يطابق مجموع (سعر × كمية) الحقيقي لكل العناصر —
-        // هذا يمنع إنشاء طلب بسعر مُلفَّق عبر كتابة مباشرة لقاعدة البيانات خارج التطبيق.
-        allItemsValid(request.resource.data.items) &&
-        request.resource.data.subtotal == computedSubtotal(request.resource.data.items) &&
-        // ✅ إصلاح (Audit H-2/M-4): الخصم يجب أن يكون صفراً بلا كوبون، أو مرتبطاً
-        // فعلياً بكوبون صالح تُحدَّث حالته ضمن نفس معاملة إنشاء هذا الطلب بالذات.
-        discountValid(request.resource.data) &&
-        // ✅ جديد: خط الدفاع التقريبي (bounding box) لمناطق التوصيل — راجع
-        // deliveryZoneBboxValid() أعلاه. التحقق الدقيق (مضلّع فعلي) يتم على
-        // السيرفر لمسار الموقع؛ لتطبيق الأندرويد (Client SDK) هذا هو الفحص
-        // الفعلي الوحيد الممكن هنا.
-        deliveryZoneBboxValid(request.resource.data);
-
-      // ✅ لا تحديث ولا حذف من العميل مباشرة إطلاقاً — أي تغيير لحالة الطلب
-      // (تم الدفع/تم الشحن/إلغاء...) يجب أن يمر فقط عبر لوحة تحكم الموقع (Admin SDK)
-      allow update, delete: if false;
+      // ✅ الإنشاء حصراً عبر Cloud Function `placeOrder` (Admin SDK) داخل transaction واحدة تشمل
+      // المخزون والكوبون والعدّاد. لم تعد هناك أي كتابة مباشرة من العميل على الطلبات.
+      allow write: if false;
     }
 
     // ═══════════════════════════════════════════════════════════════════

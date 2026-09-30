@@ -31,7 +31,13 @@ export async function checkRateLimitFirestore(
     const data = snap.exists ? (snap.data() as { count: number; resetAt: number }) : null;
 
     if (!data || data.resetAt <= now) {
-      tx.set(ref, { count: 1, resetAt: now + windowMs });
+      // expireAt: حقل TTL (راجع fieldOverrides بـfirestore.indexes.json) — يحذف Firestore المستند تلقائياً
+      // بعد انتهاء نافذته بدل تراكم مستند لكل مفتاح للأبد (كان لا يُحذف أبداً).
+      tx.set(ref, {
+        count: 1,
+        resetAt: now + windowMs,
+        expireAt: admin.firestore.Timestamp.fromMillis(now + windowMs + 24 * 60 * 60 * 1000),
+      });
       return true;
     }
 

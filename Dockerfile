@@ -3,12 +3,13 @@ FROM node:22-alpine AS builder
 
 WORKDIR /app
 
-# Copy package.json only (lock file will be generated during install)
-COPY package.json ./
+# Copy package.json (+ pnpm-lock.yaml إن وُجد — يرفعه CI تلقائياً بأول تشغيل، راجع build-check.yml)
+COPY package.json pnpm-lock.yaml* ./
 
-# Install pnpm (pinned to match "packageManager" in package.json) and generate lock file
+# ✅ بناء قابل للتكرار: مع وجود القفل نثبّت بحرفيّته (--frozen-lockfile) فلا تتغير إصدارات
+# الحزم بين بناء وآخر؛ وبدونه نولّده مؤقتاً كما كان (ثم تنسخه المرحلة التالية).
 RUN npm install -g pnpm@10.4.1 && \
-    pnpm install --no-frozen-lockfile
+    if [ -f pnpm-lock.yaml ]; then pnpm install --frozen-lockfile; else pnpm install --no-frozen-lockfile; fi
 
 # Copy the rest of the source code
 COPY . .
@@ -57,6 +58,10 @@ EXPOSE 3000
 
 # Set environment variables
 ENV NODE_ENV=production
+
+# ✅ لا يعمل السيرفر بصلاحية root — صورة node الرسمية تتضمن المستخدم "node"
+RUN chown -R node:node /app
+USER node
 
 # Start the application
 CMD ["node", "dist/index.js"]

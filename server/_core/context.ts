@@ -30,7 +30,8 @@ export async function createContext(
       const authHeader = opts.req.headers.authorization;
       if (authHeader && authHeader.startsWith("Bearer ")) {
         const idToken = authHeader.split("Bearer ")[1];
-        const decodedToken = await adminAuth.verifyIdToken(idToken);
+        // ✅ checkRevoked=true: حساب عُطِّل/أُلغيت جلساته يُرفض فوراً بدل قبول التوكن حتى ساعة (كمسار الكوكي)
+        const decodedToken = await adminAuth.verifyIdToken(idToken, true);
         user = await buildUser(decodedToken.uid, decodedToken.email, decodedToken.name);
       }
     }

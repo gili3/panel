@@ -73,7 +73,10 @@ service firebase.storage {
     //  الإيصال نفسه أو الأدمن (بيانات دفع حسّاسة، ليست عامة كصور المنتجات).
     match /receipts/{userId}/{fileName} {
       allow read: if isSignedIn() && (request.auth.uid == userId || isAdmin());
-      allow create: if isSignedIn() && request.auth.uid == userId && isValidImage();
+      // ✅ resource == null: الإنشاء فقط لملف غير موجود. الكتابة فوق إيصال موجود تُعدّ update وترفضها
+      // القاعدة التالية بالإنتاج، لكن محاكي Storage يمرّر الاستبدال أحياناً كـcreate (فنجح الاختبار
+      // "لا استبدال لإيصال مرفوع" خطأً). هذا الشرط يمنع الاستبدال بصرف النظر عن كيفية تصنيفه.
+      allow create: if isSignedIn() && request.auth.uid == userId && isValidImage() && resource == null;
       allow update, delete: if false; // إيصال مرفوع = نهائي، لا تعديل ولا حذف من العميل
     }
 

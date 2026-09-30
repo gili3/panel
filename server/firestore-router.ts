@@ -84,10 +84,25 @@ async function assertCouponNotUsedByUser(
 // شبه حرفياً بين createOrder وcreateDirectOrder — أي تعديل مستقبلي (ضريبة
 // جديدة، منطق شحن مختلف...) كان يحتاج تطبيقه بمكانين منفصلين تماماً بخطر
 // نسيان أحدهما. الآن createDirectOrder حالة خاصة (عنصر واحد) من نفس الدالة.
+// ✅ إصلاح (ذرّية الطلب): كان مستند الطلب يُكتب *بعد* انتهاء هذه المعاملة (`orders.add`)، فأي فشل
+// بينهما (انقطاع شبكة/إعادة تشغيل) يترك المخزون مخصوماً والكوبون محروقاً بلا أي طلب. الآن
+// `buildOrder` يُنتج بيانات الطلب ويُكتب المستند داخل نفس المعاملة — إما كل شيء أو لا شيء.
+// (buildOrder قد تُستدعى أكثر من مرة إن أعاد Firestore محاولة المعاملة، لذا يجب أن تكون نقية.)
+type PricedOrder = {
+  authoritativeItems: { productId: string; name: string; price: number; quantity: number; image: string }[];
+  subtotal: number;
+  discountAmount: number;
+  shippingCost: number;
+  total: number;
+  appliedCoupon: string | null;
+  orderNumberString: string;
+};
+
 async function runOrderPricingTransaction(
   ctx: { user: { openId: string } },
   items: { productId: string; quantity: number }[],
   couponCode: string | undefined,
+  buildOrder: (priced: PricedOrder) => Record<string, unknown>,
 ) {
   const counterRef = adminDb.collection("counters").doc("orders");
 
@@ -174,15 +189,20 @@ async function runOrderPricingTransaction(
     tx.set(counterRef, { current: nextNumber }, { merge: true });
     const orderNumberString = nextNumber.toString();
 
-    return {
+    const total = calculateOrderTotal(subtotal, discountAmount, shippingCost);
+    const priced: PricedOrder = {
       authoritativeItems,
       subtotal,
       discountAmount,
       shippingCost,
-      total: calculateOrderTotal(subtotal, discountAmount, shippingCost),
+      total,
       appliedCoupon,
       orderNumberString,
     };
+    const orderRef = adminDb.collection("orders").doc();
+    tx.set(orderRef, buildOrder(priced));
+
+    return { ...priced, orderId: orderRef.id };
   });
 }
 
@@ -617,7 +637,7 @@ export const firestoreRouter = router({
   addToCart: protectedProcedure
     .input(z.object({
       productId: z.string(),
-      quantity: z.number().min(1),
+      quantity: z.number().int().min(1).max(999),
       price: z.number(),
       name: z.string(),
       image: z.string().optional(),
@@ -660,7 +680,7 @@ export const firestoreRouter = router({
   updateCartQuantity: protectedProcedure
     .input(z.object({
       productId: z.string(),
-      quantity: z.number().min(0), // 0 = حذف العنصر من السلة
+      quantity: z.number().int().min(0).max(999), // 0 = حذف العنصر من السلة
     }))
     .mutation(async ({ input, ctx }) => {
       const cartRef = adminDb.collection("users").doc(ctx.user.openId).collection("cart").doc(input.productId);
@@ -890,9 +910,10 @@ export const firestoreRouter = router({
       // ✅ لا نقبل price/name/total من العميل إطلاقاً — يُعاد بناؤها من قاعدة البيانات
       // داخل الـtransaction لمنع التلاعب بالسعر النهائي للطلب.
       items: z.array(z.object({
-        productId: z.string(),
-        quantity: z.number().min(1),
-      })),
+        productId: z.string().min(1).max(128),
+        // ✅ عدد صحيح فقط وبحد أقصى — كانت الكسور (0.001) وأي قيمة ضخمة مقبولة، والقواعد/الأندرويد تفرض int
+        quantity: z.number().int().min(1).max(999),
+      })).min(1).max(30),
       couponCode: z.string().optional(),
       shippingAddress: shippingAddressSchema,
       paymentMethod: z.string(),
@@ -919,53 +940,54 @@ export const firestoreRouter = router({
       // يُستهلك أولاً دائماً بلا شرط — فأي فشل لاحق (نفاد مخزون، كوبون غير
       // صالح...) يترك "فجوة" دائمة في تسلسل أرقام الطلبات رغم عدم إنشاء أي
       // طلب فعلياً. الآن لا يُستهلك الرقم إلا بعد نجاح كل عمليات التحقق.
-      const { authoritativeItems, subtotal, discountAmount, shippingCost, total, appliedCoupon, orderNumberString } =
-        await runOrderPricingTransaction(ctx, input.items, couponCode);
+      const { authoritativeItems, orderNumberString, orderId } =
+        await runOrderPricingTransaction(ctx, input.items, couponCode, (p) => ({
+          items: p.authoritativeItems,
+          subtotal: p.subtotal,
+          discount: p.discountAmount, // ✅ نفس اسم الحقل الذي يقرأه تطبيق الأندرويد (Order.discount)
+          couponCode: p.appliedCoupon,
+          shippingCost: p.shippingCost,
+          total: p.total,
+          shippingAddress: input.shippingAddress,
+          paymentMethod: input.paymentMethod,
+          paymentReceipt: input.paymentReceipt ?? "",
+          userId: ctx.user.openId,
+          orderNumber: p.orderNumberString,
+          verificationToken,
+          // ✅ إعادة تنظيم: حالة واحدة موحّدة بدل status/paymentStatus منفصلين —
+          // كل طلب جديد يبدأ دائماً بـ"قيد المراجعة" (سواء أُرفق إيصال دفع أو لا)
+          // ريثما يراجعه الأدمن فعلياً من لوحة التحكم وينقله للحالة التالية.
+          status: "under_review",
+          createdAt: new Date(),
+          updatedAt: new Date(),
+        }));
 
-      const orderData = {
-        items: authoritativeItems,
-        subtotal,
-        discount: discountAmount, // ✅ نفس اسم الحقل الذي يقرأه تطبيق الأندرويد (Order.discount)
-        couponCode: appliedCoupon,
-        shippingCost,
-        total,
-        shippingAddress: input.shippingAddress,
-        paymentMethod: input.paymentMethod,
-        paymentReceipt: input.paymentReceipt,
-        userId: ctx.user.openId,
-        orderNumber: orderNumberString,
-        verificationToken,
-        // ✅ إعادة تنظيم: حالة واحدة موحّدة بدل status/paymentStatus منفصلين —
-        // كل طلب جديد يبدأ دائماً بـ"قيد المراجعة" (سواء أُرفق إيصال دفع أو لا)
-        // ريثما يراجعه الأدمن فعلياً من لوحة التحكم وينقله للحالة التالية.
-        status: "under_review",
-        createdAt: new Date(),
-        updatedAt: new Date(),
-      };
-      
-      const docRef = await adminDb.collection("orders").add(orderData);
-      
-      const cartSnapshot = await adminDb.collection("users").doc(ctx.user.openId).collection("cart").get();
-      const batch = adminDb.batch();
-      cartSnapshot.docs.forEach(doc => batch.delete(doc.ref));
-      await batch.commit();
+      // تفريغ السلة أفضل جهد فقط: الطلب اكتمل فعلاً داخل المعاملة أعلاه، وفشل التفريغ
+      // (شبكة لحظية) يجب ألا يُظهر للعميل "فشل الطلب" فيُعيد المحاولة ويتكرر الطلب.
+      try {
+        const cartSnapshot = await adminDb.collection("users").doc(ctx.user.openId).collection("cart").get();
+        const batch = adminDb.batch();
+        cartSnapshot.docs.forEach(doc => batch.delete(doc.ref));
+        await batch.commit();
+      } catch (err) {
+        console.error("[createOrder] تعذّر تفريغ السلة بعد نجاح الطلب:", err);
+      }
 
       // إشعارا "تم استلام طلبك" و"طلب جديد" يصلان تلقائياً عبر Cloud Function
-      // (onOrderCreated) بمجرد نجاح docRef.set أعلاه — لا استدعاء يدوي هنا.
+      // (onOrderCreated) بمجرد إنشاء مستند الطلب — لا استدعاء يدوي هنا.
 
-      // ✅ Algolia: المخزون تغيّر داخل runOrderPricingTransaction أعلاه —
-      // نزامن سجلات المنتجات المتأثرة الآن (بعد نجاح الطلب بالكامل)، حتى لا
-      // يظهر منتج نفد مخزونه للتو ضمن نتائج بحث Algolia لعميل آخر.
+      // ✅ Algolia: المخزون تغيّر داخل runOrderPricingTransaction — نزامن سجلات المنتجات
+      // المتأثرة الآن (بعد نجاح الطلب)، حتى لا يظهر منتج نفد مخزونه للتو ببحث عميل آخر.
       resyncProductsStock(authoritativeItems.map(i => i.productId)).catch(() => {});
 
-      return { id: docRef.id, orderNumber: orderNumberString, success: true };
+      return { id: orderId, orderNumber: orderNumberString, success: true };
     }),
 
   createDirectOrder: protectedProcedure
     .input(z.object({
       // ✅ لا price/name/total من العميل — تُشتق من المنتج نفسه (نفس مبدأ createOrder)
-      productId: z.string(),
-      quantity: z.number().min(1),
+      productId: z.string().min(1).max(128),
+      quantity: z.number().int().min(1).max(999),
       couponCode: z.string().optional(),
       shippingAddress: shippingAddressSchema,
       paymentMethod: z.string(),
@@ -988,43 +1010,33 @@ export const firestoreRouter = router({
 
       // ✅ إصلاح تكرار: أصبح "شراء الآن" حالة خاصة (عنصر واحد) من نفس دالة
       // التسعير المستخدمة في createOrder — بدل نسخة كاملة منفصلة من نفس المنطق.
-      const { authoritativeItems, subtotal, discountAmount, shippingCost, total, appliedCoupon, orderNumberString } =
+      const { authoritativeItems, orderNumberString, orderId } =
         await runOrderPricingTransaction(
           ctx,
           [{ productId: input.productId, quantity: input.quantity }],
           couponCode,
+          (p) => ({
+            userId: ctx.user.openId,
+            orderNumber: p.orderNumberString,
+            verificationToken,
+            items: [p.authoritativeItems[0]],
+            subtotal: p.subtotal,
+            discount: p.discountAmount,
+            couponCode: p.appliedCoupon,
+            shippingCost: p.shippingCost,
+            total: p.total,
+            shippingAddress: input.shippingAddress,
+            paymentMethod: input.paymentMethod,
+            paymentReceipt: input.paymentReceipt ?? "",
+            status: "under_review",
+            createdAt: new Date(),
+            updatedAt: new Date(),
+          }),
         );
-      const item = authoritativeItems[0];
 
-      const orderData = {
-        userId: ctx.user.openId,
-        orderNumber: orderNumberString,
-        verificationToken,
-        items: [item],
-        subtotal,
-        discount: discountAmount,
-        couponCode: appliedCoupon,
-        shippingCost,
-        total,
-        shippingAddress: input.shippingAddress,
-        paymentMethod: input.paymentMethod,
-        paymentReceipt: input.paymentReceipt,
-        // ✅ إعادة تنظيم: نفس منطق createOrder أعلاه — حالة واحدة موحّدة،
-        // كل طلب جديد يبدأ بـ"قيد المراجعة" بصرف النظر عن وجود إيصال دفع.
-        status: "under_review",
-        createdAt: new Date(),
-        updatedAt: new Date(),
-      };
-      
-      const docRef = await adminDb.collection("orders").add(orderData);
-      
-      // نفس ملاحظة createOrder: onOrderCreated (Cloud Function) يتكفّل بإشعارَي
-      // العميل والأدمن تلقائياً بمجرد إنشاء docRef أعلاه.
+      resyncProductsStock([authoritativeItems[0].productId]).catch(() => {});
 
-      // ✅ Algolia: نفس إصلاح createOrder — إعادة مزامنة المخزون بعد نجاح الطلب
-      resyncProductsStock([item.productId]).catch(() => {});
-
-      return { id: docRef.id, orderNumber: orderNumberString, success: true };
+      return { id: orderId, orderNumber: orderNumberString, success: true };
     }),
 
   // --- إعدادات المتجر ---

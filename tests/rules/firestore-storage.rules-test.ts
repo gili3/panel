@@ -91,113 +91,79 @@ describe("الوصول غير المصرّح به", () => {
   });
 });
 
-describe("التلاعب بالأسعار والكميات والشحن (إنشاء الطلب)", () => {
-  it("طلب سليم يُقبل", async () => {
+// ─────────────────────────────────────────────────────────────────────────
+// الطلب والمخزون والعدّاد والكوبون تُكتب حصراً من Cloud Function `placeOrder` (Admin SDK) —
+// منطق التسعير/المخزون/الكوبون نفسه مغطّى باختبارات وحدة (server/*.test.ts) واختبار التطابق
+// (tests/functions/order-pricing-parity.test.ts). هنا نتأكد أن العميل لا يستطيع تجاوزه أبداً.
+// ─────────────────────────────────────────────────────────────────────────
+describe("الكتابة المباشرة من العميل مقفلة (إنشاء الطلب/المخزون/العدّاد/الكوبون)", () => {
+  it("حتى طلب سليم تماماً من حساب مؤكَّد يُرفض — الإنشاء عبر placeOrder فقط", async () => {
     const db = verified("u1").firestore();
-    await assertSucceeds(setDoc(doc(db, "orders/ok1"), validOrder()));
+    await assertFails(setDoc(doc(db, "orders/ok1"), validOrder()));
   });
-  it("سعر عنصر مخفَّض يُرفض", async () => {
-    const db = verified("u1").firestore();
-    await assertFails(setDoc(doc(db, "orders/bad1"), validOrder({
-      items: [{ productId: "p1", name: "منتج", quantity: 1, price: 1 }], subtotal: 1, total: 31,
-    })));
-  });
-  it("مجموع فرعي/إجمالي غير متسق يُرفض", async () => {
-    const db = verified("u1").firestore();
-    await assertFails(setDoc(doc(db, "orders/bad2"), validOrder({ subtotal: 10, total: 40 })));
-    await assertFails(setDoc(doc(db, "orders/bad3"), validOrder({ total: 1 })));
-  });
-  it("شحن مجاني مزوَّر يُرفض", async () => {
-    const db = verified("u1").firestore();
-    await assertFails(setDoc(doc(db, "orders/bad4"), validOrder({ shippingCost: 0, total: 100 })));
-  });
-  it("كمية كسرية أو صفر أو سالبة تُرفض", async () => {
-    const db = verified("u1").firestore();
-    for (const [i, q] of [0.001, 0, -2].entries()) {
-      await assertFails(setDoc(doc(db, `orders/badq${i}`), validOrder({
-        items: [{ productId: "p1", name: "منتج", quantity: q, price: 100 }],
-        subtotal: 100 * q, total: 100 * q + 30,
-      })));
-    }
-  });
-  it("حالة ابتدائية غير under_review أو انتحال userId يُرفضان", async () => {
-    const db = verified("u1").firestore();
-    await assertFails(setDoc(doc(db, "orders/bad5"), validOrder({ status: "delivered" })));
-    await assertFails(setDoc(doc(db, "orders/bad6"), validOrder({ userId: "u2" })));
-  });
-  it("خصم بلا كوبون يُرفض", async () => {
-    const db = verified("u1").firestore();
-    await assertFails(setDoc(doc(db, "orders/bad7"), validOrder({ discount: 50, total: 80 })));
-    it("لا تُوقِف القواعد نفسها هذا الالتفاف — التحقق الفعلي بمعاملة السيرفر (mergeOrderItemQuantities)", async () => {
-    // ⚠️ ملاحظة: هذا الاختبار يوثّق حداً معروفاً لقواعد Firestore، وليس فحص إصلاح.
-    // القواعد تتحقق من *شكل* المستند فقط، لا من مخزون المنتج الفعلي عبر مستندات
-    // متعددة — فلا يمكنها وحدها منع الالتفاف بسطرين لنفس المنتج؛ الإصلاح الحقيقي
-    // بمعاملة السيرفر (runOrderPricingTransaction + mergeOrderItemQuantities)
-    // مغطّى باختبارات وحدة منفصلة (server/order-stock.test.ts)، لا هنا.
-    const db = verified("u1").firestore();
-    await assertSucceeds(setDoc(doc(db, "orders/dup1"), validOrder({
-      items: [
-        { productId: "p1", name: "منتج", quantity: 1, price: 100 },
-        { productId: "p1", name: "منتج", quantity: 1, price: 100 },
-      ],
-      subtotal: 200, total: 230,
-    })));
-  });
-});
-});
 
-describe("حسابات غير مؤكَّدة البريد", () => {
-  it("لا تنشئ طلباً ولا تنقص مخزوناً ولا تزيد العدّاد أو استخدام كوبون", async () => {
+  it("لا استنزاف مخزون: أي إنقاص/تعديل على المنتجات مرفوض", async () => {
+    const db = verified("u1").firestore();
+    await assertFails(updateDoc(doc(db, "products/p1"), { stock: 49 }));
+    await assertFails(updateDoc(doc(db, "products/p1"), { stock: 0 }));
+    await assertFails(updateDoc(doc(db, "products/p1"), { price: 1 }));
+    await assertFails(updateDoc(doc(db, "products/p1"), { isActive: false }));
+  });
+
+  it("العدّاد داخلي: لا قراءة ولا إنشاء ولا زيادة", async () => {
     await env.withSecurityRulesDisabled(async (ctx) => {
       await setDoc(doc(ctx.firestore(), "counters/orders"), { current: 11001000 });
     });
-    const db = unverified("u1").firestore();
-    await assertFails(setDoc(doc(db, "orders/nv1"), validOrder()));
-    await assertFails(updateDoc(doc(db, "products/p1"), { stock: 49 }));
+    const db = verified("u1").firestore();
+    await assertFails(getDoc(doc(db, "counters/orders")));
     await assertFails(updateDoc(doc(db, "counters/orders"), { current: 11001001 }));
+    await assertFails(setDoc(doc(db, "counters/other"), { current: 11001000 }));
+  });
+
+  it("لا حرق كوبون: usageCount وusedBy لا يُكتبان من العميل، منفردين أو بدفعة واحدة", async () => {
+    const db = verified("u1").firestore();
+    await assertFails(updateDoc(doc(db, "coupons/SAVE10"), { usageCount: 1 }));
+    await assertFails(updateDoc(doc(db, "coupons/SAVE10"), { discountValue: 100 }));
+    await assertFails(setDoc(doc(db, "coupons/SAVE10/usedBy/u1"), { usedAt: new Date() }));
     const batch = writeBatch(db);
     batch.update(doc(db, "coupons/SAVE10"), { usageCount: 1 });
     batch.set(doc(db, "coupons/SAVE10/usedBy/u1"), { usedAt: new Date() });
     await assertFails(batch.commit());
   });
-  it("لكنها تقرأ ملفها وتدير سلتها (لا تُحجب وظائف غير الشراء)", async () => {
-    const db = unverified("u1").firestore();
-    await assertSucceeds(getDoc(doc(db, "users/u1")));
-    await assertSucceeds(setDoc(doc(db, "users/u1/cart/p1"), { quantity: 1 }));
+
+  it("رسائل التواصل: لا كتابة مباشرة (حتى للزائر) — الإرسال عبر submitContactMessage", async () => {
+    const msg = { name: "س", email: "a@b.co", subject: "", message: "مرحبا", userId: null, status: "new", createdAt: new Date() };
+    await assertFails(setDoc(doc(env.unauthenticatedContext().firestore(), "contactMessages/m1"), msg));
+    await assertFails(setDoc(doc(verified("u1").firestore(), "contactMessages/m2"), { ...msg, userId: "u1" }));
+    await assertFails(getDoc(doc(verified("u1").firestore(), "contactMessages/m2")));
   });
 });
 
-describe("الكوبونات", () => {
-  it("قراءة كوبون بمعرّفه مسموحة، وجلب القائمة كاملة ممنوع (لا تعداد للأكواد)", async () => {
+describe("القراءات الشرعية ما زالت تعمل", () => {
+  it("قراءة كوبون بمعرّفه للمعاينة، ومنع جلب القائمة كاملة (لا تعداد للأكواد)", async () => {
     const db = verified("u1").firestore();
     await assertSucceeds(getDoc(doc(db, "coupons/SAVE10")));
     await assertFails(getDocs(collection(db, "coupons")));
+    await assertFails(getDoc(doc(env.unauthenticatedContext().firestore(), "coupons/SAVE10")));
   });
-  it("لا استنزاف: زيادة usageCount منفردة بلا سجل usedBy تُرفض (حتى مكرَّرة)", async () => {
-    const db = verified("u1").firestore();
-    await assertFails(updateDoc(doc(db, "coupons/SAVE10"), { usageCount: 1 }));
-  });
-  it("الاستخدام الشرعي: usageCount+1 مع إنشاء usedBy بنفس الدفعة يُقبل", async () => {
-    const db = verified("u1").firestore();
-    const batch = writeBatch(db);
-    batch.update(doc(db, "coupons/SAVE10"), { usageCount: 1 });
-    batch.set(doc(db, "coupons/SAVE10/usedBy/u1"), { usedAt: new Date() });
-    await assertSucceeds(batch.commit());
-  });
-  it("لا يمكن تعديل قيمة الكوبون أو تفعيله", async () => {
-    const db = verified("u1").firestore();
-    await assertFails(updateDoc(doc(db, "coupons/SAVE10"), { discountValue: 100 }));
-  });
-});
 
-describe("المخزون والمنتجات", () => {
-  it("إنقاص المخزون ضمن الحد مسموح، لكن الزيادة أو القفزة الكبيرة أو تغيير السعر مرفوضة", async () => {
+  it("العميل يقرأ سجل استخدام كوبونه هو فقط وطلباته هو فقط", async () => {
+    await env.withSecurityRulesDisabled(async (ctx) => {
+      const adminDb = ctx.firestore();
+      await setDoc(doc(adminDb, "coupons/SAVE10/usedBy/u1"), { usedAt: new Date() });
+      await setDoc(doc(adminDb, "orders/o-u1"), { userId: "u1", status: "under_review", total: 130 });
+    });
     const db = verified("u1").firestore();
-    await assertSucceeds(updateDoc(doc(db, "products/p1"), { stock: 45 }));
-    await assertFails(updateDoc(doc(db, "products/p1"), { stock: 999 }));
-    await assertFails(updateDoc(doc(db, "products/p1"), { stock: 0 })); // 45 → 0 = أكثر من 10
-    await assertFails(updateDoc(doc(db, "products/p1"), { price: 1 }));
-    await assertFails(updateDoc(doc(db, "products/p1"), { isActive: false }));
+    await assertSucceeds(getDoc(doc(db, "coupons/SAVE10/usedBy/u1")));
+    await assertFails(getDoc(doc(db, "coupons/SAVE10/usedBy/u2")));
+    await assertSucceeds(getDoc(doc(db, "orders/o-u1")));
+    await assertFails(getDoc(doc(db, "orders/o-u2")));
+  });
+
+  it("الحساب غير المؤكَّد يقرأ ملفه ويدير سلته (لا تُحجب وظائف غير الشراء)", async () => {
+    const db = unverified("u1").firestore();
+    await assertSucceeds(getDoc(doc(db, "users/u1")));
+    await assertSucceeds(setDoc(doc(db, "users/u1/cart/p1"), { quantity: 1 }));
   });
 });
 
